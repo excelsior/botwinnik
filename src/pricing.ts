@@ -42,7 +42,7 @@ export const BUILT_IN_PRICES: Record<string, ModelPrice> = {
   "claude-opus-4-8": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-opus-4-7": { input: 5, output: 25, cachedInput: 0.5 },
   "claude-opus-4-6": { input: 5, output: 25, cachedInput: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10, cachedInput: 0.2 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cachedInput: 0.1 },
   "claude-sonnet-5": { input: 2, output: 10, cachedInput: 0.2 },
   "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cachedInput: 0.01 },

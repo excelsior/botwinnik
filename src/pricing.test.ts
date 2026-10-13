@@ -6,7 +6,7 @@ import { addSpend, costOf, emptySpend, findPrice, formatUsd, spendOf } from "./p
 describe("pricing", () => {
   it("finds built-in prices, config overrides, and dated snapshots", () => {
     assert.deepEqual(findPrice("claude-opus-5-5"), { input: 4, output: 20, cachedInput: 0.2 });
-    assert.deepEqual(findPrice("Claude-Sonnet-5-5"), { input: 2, output: 10, cachedInput: 0.2 });
+    assert.deepEqual(findPrice("Claude-Sonnet-5-5"), { input: 2, output: 10, cachedInput: 0.1 });
     assert.equal(findPrice("gpt-5.6-luna")?.output, 1.2);
     assert.deepEqual(findPrice("claude-opus-5-5", { "claude-opus-5-5": { input: 1, output: 2 } }), { input: 1, output: 2 });
     assert.equal(findPrice("claude-haiku-4-5-20251001")?.input, 1);
