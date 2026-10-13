@@ -326,28 +326,9 @@ export class GameRunner {
       at: new Date().toISOString(),
     });
 
-    const over = this.positionalResult(color);
+    const over = positionalResult(this.chess, color);
     if (over) this.end("finished", over);
     else this.emit();
-  }
-
-  /** Game-ending conditions after `mover` has moved. */
-  private positionalResult(mover: Color): Termination | null {
-    const c = this.chess;
-    if (c.isCheckmate()) {
-      return { reason: "checkmate", winner: mover, message: `${colorName(mover)} wins by checkmate.` };
-    }
-    if (c.isStalemate()) return { reason: "stalemate", winner: null, message: "Draw by stalemate." };
-    if (c.isInsufficientMaterial()) {
-      return { reason: "insufficient_material", winner: null, message: "Draw: neither side has enough material to checkmate." };
-    }
-    if (c.isThreefoldRepetition()) {
-      return { reason: "threefold_repetition", winner: null, message: "Draw by threefold repetition." };
-    }
-    if (c.isDrawByFiftyMoves()) {
-      return { reason: "fifty_moves", winner: null, message: "Draw by the fifty-move rule." };
-    }
-    return null;
   }
 
   /** Records an illegal move. Returns true if it ended the game. */
@@ -519,6 +500,24 @@ export class GameRunner {
         this.emit();
       });
   }
+}
+
+/** Game-ending conditions after `mover` has moved, or null if the game goes on. */
+export function positionalResult(c: Chess, mover: Color): Termination | null {
+  if (c.isCheckmate()) {
+    return { reason: "checkmate", winner: mover, message: `${colorName(mover)} wins by checkmate.` };
+  }
+  if (c.isStalemate()) return { reason: "stalemate", winner: null, message: "Draw by stalemate." };
+  if (c.isInsufficientMaterial()) {
+    return { reason: "insufficient_material", winner: null, message: "Draw: neither side has enough material to checkmate." };
+  }
+  if (c.isThreefoldRepetition()) {
+    return { reason: "threefold_repetition", winner: null, message: "Draw by threefold repetition." };
+  }
+  if (c.isDrawByFiftyMoves()) {
+    return { reason: "fifty_moves", winner: null, message: "Draw by the fifty-move rule." };
+  }
+  return null;
 }
 
 /** The full-move number a move was played on, read from the FEN after it. */

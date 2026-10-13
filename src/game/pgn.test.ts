@@ -44,8 +44,11 @@ describe("PGN export", () => {
     assert.match(pgn, /^\[TimeControl "300\+3"\]$/m);
     assert.match(pgn, /^\[Termination "normal"\]$/m);
     assert.match(pgn, /^\[WhiteType "program"\]$/m);
-    assert.match(moves, /^1\. f3 \{\[%clk 0:05:01\] A \(dubious\) start\.\} 1\.\.\. e5/);
-    assert.match(moves, /2\.\.\. Qh4# \{\[%clk 0:05:06\] Mate\. Black wins by checkmate\.\} 0-1$/);
+    assert.match(pgn, /^\[WhiteProvider "anthropic"\]$/m);
+    assert.match(pgn, /^\[BlackClock "0:05:06\.000"\]$/m);
+    assert.match(pgn, /^\[GameStatus "finished"\]$/m);
+    assert.match(moves, /^1\. f3 \{\[%clk 0:05:01\] \[%emt 0:00:02\.0\] A \(dubious\) start\.\} 1\.\.\. e5/);
+    assert.match(moves, /2\.\.\. Qh4# \{\[%clk 0:05:06\] \[%emt 0:00:00\.0\] Mate\. \[%end checkmate black\] Black wins by checkmate\.\} 0-1$/);
     assert.match(pgn, /0-1\n$/);
     assert.ok(pgn.split("\n").every((line) => line.length <= 80), "lines are wrapped");
 
@@ -62,10 +65,13 @@ describe("PGN export", () => {
     );
     const pgn = toPgn(game);
     const moves = movetext(pgn);
-    assert.match(moves, /^\{Illegal move by White: "Ke2" is not a legal move\. Black gets 1 minute extra\. Reasoning: King walk!\} 1\. e4/);
-    assert.match(moves, /White offers a draw\. Black declines the draw offer by playing on\.\} 1\.\.\. e5/);
+    assert.match(
+      moves,
+      /^\{\[%event illegal_move white bonus=60000 sent="Ke2"\] Illegal move by White: "Ke2" is not a legal move\. Black gets 1 minute extra\. \[%reasoning\] King walk!\} 1\. e4/,
+    );
+    assert.match(moves, /\[%draw offer\] White offers a draw\. \[%event draw_declined black\] Black declines the draw offer by playing on\.\} 1\.\.\. e5/);
     assert.match(pgn, /^\[Termination "rules infraction"\]$/m);
-    assert.match(moves, /White made a second illegal move\.\} 0-1$/);
+    assert.match(moves, /\[%end illegal_moves black\] Black wins: White made a second illegal move\.\} 0-1$/);
     const chess = new Chess();
     chess.loadPgn(pgn);
     assert.equal(chess.history().length, 2);
@@ -77,7 +83,10 @@ describe("PGN export", () => {
     const pgn = toPgn(game);
     assert.match(pgn, /^\[SetUp "1"\]$/m);
     assert.match(pgn, new RegExp(`^\\[FEN "${fen.replace(/[/]/g, "\\/")}"\\]$`, "m"));
-    assert.match(movetext(pgn), /^1\.\.\. c5 \{\[%clk 0:05:03\] Playing c5\. White resigns\. Black wins: White resigned\.\} 0-1$/);
+    assert.match(
+      movetext(pgn),
+      /^1\.\.\. c5 \{\[%clk 0:05:03\] \[%emt 0:00:00\.0\] Playing c5\. \[%event resignation white\] White resigns\. \[%end resignation black\] Black wins: White resigned\.\} 0-1$/,
+    );
     const chess = new Chess();
     chess.loadPgn(pgn);
     assert.equal(chess.history()[0], "c5");
@@ -95,5 +104,13 @@ describe("PGN export", () => {
     assert.match(pgn, /^\[Result "\*"\]$/m);
     assert.match(pgn, /^\[Termination "unterminated"\]$/m);
     assert.match(pgn, /\n\*\n$/);
+  });
+
+  it("keeps commands on one line and escapes what would end them", async () => {
+    const game = await play([{ move: "Ke2}] [%x {y}", reasoning: "Odd [%clk 9:99:99] text." }, "e4", "d4"], ["e5", { action: "resign" }]);
+    const pgn = toPgn(game);
+    assert.match(pgn, /sent="Ke2\\u007d\\u005d \\u005b%x \\u007by\\u007d"/);
+    assert.match(pgn, /Odd \[ %clk 9:99:99\] text\./);
+    assert.doesNotMatch(pgn, /\[%[^\]]*\n/, "no command is split across lines");
   });
 });

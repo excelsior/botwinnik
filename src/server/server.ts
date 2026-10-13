@@ -4,21 +4,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDER_LABELS, PROVIDERS, type AppConfig, type Provider } from "../config.js";
 import { toPgn } from "../game/pgn.js";
+import { PgnImportError } from "../game/pgnImport.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
 import type { GameRecord } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
+const STOCKFISH = "vendor/stockfish/stockfish-18-lite-single";
 const STATIC_FILES: Record<string, string> = {
   "/": "index.html",
   "/index.html": "index.html",
   "/app.js": "app.js",
+  "/engine.js": "engine.js",
   "/style.css": "style.css",
+  [`/${STOCKFISH}.js`]: `${STOCKFISH}.js`,
+  [`/${STOCKFISH}.wasm`]: `${STOCKFISH}.wasm`,
 };
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".wasm": "application/wasm",
 };
 
 export const TIME_CONTROL_PRESETS = ["1+0", "3+2", "5+3", "10+0", "15+10", "30+0", "90+30"];
@@ -30,6 +36,9 @@ export interface ServerOptions {
   /** Fetches the models a provider's key can use; without it the form suggests config.ini's lists. */
   listModels?: (provider: Provider) => Promise<ModelOption[]>;
 }
+
+/** A PGN with long reasoning for every move runs to a few hundred kilobytes. */
+const MAX_PGN_BYTES = 10 * 1024 * 1024;
 
 const MODEL_LIST_TTL_MS = 10 * 60_000;
 const MODEL_LIST_RETRY_MS = 60_000;
@@ -90,7 +99,9 @@ async function handle(
     const file = STATIC_FILES[url.pathname];
     if (method !== "GET" || !file) throw new HttpError(404, "Not found");
     const body = await readFile(path.join(PUBLIC_DIR, file));
-    res.writeHead(200, { "Content-Type": CONTENT_TYPES[path.extname(file)], "Cache-Control": "no-cache" });
+    // The engine files carry their version in the name, so browsers can keep them.
+    const cache = file.startsWith("vendor/") ? "public, max-age=31536000, immutable" : "no-cache";
+    res.writeHead(200, { "Content-Type": CONTENT_TYPES[path.extname(file)], "Cache-Control": cache });
     res.end(body);
     return;
   }
@@ -118,6 +129,20 @@ async function handle(
   }
 
   if (parts[1] !== "games") throw new HttpError(404, "Not found");
+
+  // /api/games/import
+  if (parts.length === 3 && parts[2] === "import" && method === "POST") {
+    const body = (await readJson(req, MAX_PGN_BYTES)) as { pgn?: unknown } | null;
+    if (typeof body?.pgn !== "string" || !body.pgn.trim()) throw new HttpError(400, "Paste or choose a PGN to import.");
+    let game: GameRecord;
+    try {
+      game = service.importPgn(body.pgn);
+    } catch (err) {
+      if (err instanceof PgnImportError) throw new HttpError(400, err.message);
+      throw err;
+    }
+    return sendJson(res, 201, withNow(game));
+  }
 
   // /api/games
   if (parts.length === 2) {
@@ -227,7 +252,7 @@ function checkOrigin(req: IncomingMessage, options: ServerOptions) {
   }
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readJson(req: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
   if (!(req.headers["content-type"] ?? "").includes("application/json")) {
     throw new HttpError(415, "Send JSON with Content-Type: application/json.");
   }
@@ -235,7 +260,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 64 * 1024) throw new HttpError(413, "Request too large.");
+    if (size > maxBytes) throw new HttpError(413, "Request too large.");
     chunks.push(chunk as Buffer);
   }
   try {

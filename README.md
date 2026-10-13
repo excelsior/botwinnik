@@ -3,7 +3,9 @@
 AI models play chess against each other. An admin sets up a game (time
 control, the two models, optionally their colors), and Botwinnik asks each
 model for its moves, runs the clocks, enforces the rules, saves the game with
-the reasoning the models give for their moves, and exports it as PGN.
+the reasoning the models give for their moves, and exports it as PGN. Games
+can be imported from PGN too, and a game exported while paused can be resumed
+after importing it.
 
 ChatGPT (OpenAI API) and Claude (Anthropic API) are supported.
 
@@ -46,10 +48,20 @@ elsewhere.
 
 ## Using it
 
-**Web page** (`npm start`): start a game, watch it live with the board, both
-clocks and each move's reasoning, step through finished games with the arrow
-keys, abort a running game, resume a paused one, and download any game as
-PGN. The page only listens on this machine by default.
+**Web page** (`npm start`): start a game and watch it live with the board,
+both clocks, the material each side has captured and each move's reasoning.
+The page fits the window: the board takes the height it has, and the move list
+scrolls on its own, following each new move as it is played. Step through the
+moves with the arrow keys (Home and End jump to the start and the latest
+move), and flip the board with the ⇅ button or F. Abort a running game, resume
+a paused one, download a game as PGN once it is over or paused, and import a
+game from a PGN file on the home page. The page only listens on this machine
+by default.
+
+**Eval bar:** next to the board, Stockfish evaluates the position shown. The
+engine (Stockfish 18 lite, single-threaded WebAssembly, in
+`public/vendor/stockfish/`, GPLv3) runs in your browser only: its evaluation
+never reaches the server or the players' prompts.
 
 **Command line:**
 
@@ -60,6 +72,7 @@ npm run botwinnik -- models   # the models each key can use
 npm run botwinnik -- resume <game-id>   # continue a game paused for lack of funds
 npm run botwinnik -- list
 npm run botwinnik -- pgn <game-id> --out game.pgn
+npm run botwinnik -- import game.pgn   # a game without a result comes back paused
 ```
 
 A model can be written as `provider:model` (`openai:my-model`); the provider
@@ -152,9 +165,22 @@ events such as illegal moves and draw offers. Games interrupted by stopping the 
 marked as aborted the next time it starts.
 
 PGN export includes the standard tags (`TimeControl`, `Termination`,
-`WhiteType "program"`...), the clock after each move as `[%clk]`, the
-reasoning as move comments, and illegal moves, draw offers and the final
-outcome as comments.
+`WhiteType "program"`...), the clock after each move as `[%clk]` and the time
+spent on it as `[%emt]`, the reasoning as move comments, and illegal moves,
+draw offers and the final outcome as comments. It also carries what's needed
+to restore the game exactly: tags for each player's provider, remaining clock
+and total spend (`WhiteProvider`, `WhiteClock`, `WhiteSpend`...) and the game's
+status, plus `[%spend]`, `[%draw]`, `[%event]` and `[%end]` commands in the
+comments.
+
+**Import** (home page, or `botwinnik import game.pgn`) reads one game per PGN.
+A Botwinnik export comes back as it was, keeping its game ID unless a saved
+game already has it. PGNs from elsewhere work too when they have a
+`TimeControl` in seconds (`"300+3"`) and model names that start with `claude`
+or `gpt` (or `WhiteProvider`/`BlackProvider` tags saying `anthropic` or
+`openai`); their comments become the moves' reasoning. A game without a result
+is imported paused, ready to resume from its last position with the clocks it
+had, unless that position already ends the game.
 
 ## Development
 
@@ -163,8 +189,8 @@ npm test            # node:test via tsx
 npm run typecheck
 ```
 
-`src/game` holds the engine (`game.ts`), PGN export, storage and the game
-service; `src/players` the prompts and the OpenAI and Anthropic clients;
+`src/game` holds the engine (`game.ts`), PGN export and import, storage and
+the game service; `src/players` the prompts and the OpenAI and Anthropic clients;
 `src/server` the admin API; `public/` the web page.
 
 ### Dev container

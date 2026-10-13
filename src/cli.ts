@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, PROVIDERS, type AppConfig } from "./config.js";
 import { moveNumberOf } from "./game/game.js";
@@ -33,6 +33,10 @@ const USAGE = `Usage:
 
   botwinnik pgn <game-id> [--out file.pgn]
       Export a saved game as PGN (printed, or written to --out).
+
+  botwinnik import <file.pgn>
+      Save a game from a PGN. A game without a result is imported paused, so
+      "botwinnik resume" can continue it.
 
 Options:
   --config <path>   Config file (default: ./config.ini, or $BOTWINNIK_CONFIG)
@@ -93,6 +97,14 @@ async function main(argv: string[]): Promise<number> {
         writeFileSync(values.out, pgn);
         console.log(`Wrote ${values.out}`);
       } else process.stdout.write(pgn);
+      return 0;
+    }
+    case "import": {
+      if (!rest[0]) throw new ConfigError("Give the PGN file to import: botwinnik import game.pgn");
+      const game = service.importPgn(readFileSync(rest[0], "utf8"));
+      console.log(`Imported game ${game.id}: ${game.white.model} (White) vs ${game.black.model} (Black), ${game.moves.length} half-moves.`);
+      if (game.status === "paused") console.log(`It has no result yet. Continue it with: botwinnik resume ${game.id}`);
+      else console.log(`${game.result}  ${game.termination?.message ?? ""}`);
       return 0;
     }
     default:

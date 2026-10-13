@@ -1,7 +1,13 @@
-// Botwinnik admin page: set up games, watch them live, browse and export saved games.
+// Botwinnik admin page: set up games, watch them live, browse, export and import saved games.
+
+import { Engine, evalLabel, favored, whiteShare } from "./engine.js";
 
 const app = document.getElementById("app");
 let cleanup = () => {};
+/** Started on the first game page and kept, so the engine loads once. */
+let engine = null;
+/** Games shown from Black's side. */
+const flippedGames = new Set();
 
 const GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TEXT = "︎"; // ask for the text (not emoji) form of the chess glyphs
@@ -92,8 +98,6 @@ function route() {
   if (match) showGame(match[1]);
   else showHome();
 }
-window.addEventListener("hashchange", route);
-route();
 
 // ---------------------------------------------------------------- home
 
@@ -107,7 +111,7 @@ async function showHome() {
     return;
   }
   const gamesSection = h("section", { class: "card" }, h("h2", {}, "Games"), h("p", { class: "muted" }, "Loading…"));
-  app.replaceChildren(h("div", { class: "home" }, newGameForm(setup), gamesSection));
+  app.replaceChildren(h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), gamesSection));
 
   const refresh = async () => {
     try {
@@ -218,6 +222,54 @@ function newGameForm(setup) {
   return form;
 }
 
+function importForm() {
+  const error = h("p", { class: "error", role: "alert" });
+  const text = h("textarea", {
+    id: "pgn",
+    rows: 4,
+    spellcheck: "false",
+    placeholder: "Paste a PGN, or choose a file",
+    "aria-label": "PGN to import",
+  });
+  const file = h("input", { type: "file", accept: ".pgn,application/x-chess-pgn,text/plain", class: "file-input", id: "pgn-file" });
+  file.addEventListener("change", async () => {
+    const chosen = file.files?.[0];
+    if (!chosen) return;
+    error.textContent = "";
+    text.value = await chosen.text();
+    file.value = "";
+  });
+  const submit = h("button", { type: "submit" }, "Import");
+  return h(
+    "form",
+    {
+      class: "card import",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        if (!text.value.trim()) {
+          error.textContent = "Paste a PGN or choose a file first.";
+          return;
+        }
+        submit.disabled = true;
+        try {
+          const { game } = await api("/games/import", { method: "POST", body: JSON.stringify({ pgn: text.value }) });
+          location.hash = `#/game/${game.id}`;
+        } catch (err) {
+          error.textContent = err.message;
+        } finally {
+          submit.disabled = false;
+        }
+      },
+    },
+    h("h2", {}, "Import a game"),
+    h("p", { class: "muted hint" }, "A game without a result comes back paused, so you can resume it."),
+    text,
+    h("div", { class: "import-actions" }, h("label", { class: "button", for: "pgn-file" }, "Choose file…"), file, submit),
+    error,
+  );
+}
+
 function gamesTable(games) {
   if (!games.length) return h("p", { class: "muted" }, "No games yet. Start one on the left.");
   return h(
@@ -259,13 +311,29 @@ function gamesTable(games) {
 
 // ---------------------------------------------------------------- game view
 
+/** Wide enough to put the board and the moves side by side, filling the window. */
+const FILL_LAYOUT = matchMedia("(min-width: 900px) and (min-height: 560px)");
+const MOVES_MIN_WIDTH = 320;
+const COLUMN_GAP = 20;
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
+/** How long a new move stays highlighted in the list; matches the "fresh" animation in style.css. */
+const FLASH_MS = 1600;
+
 function showGame(id) {
   app.replaceChildren(h("p", { class: "muted" }, "Loading…"));
   let game = null;
   let offset = 0; // server clock minus local clock
   let viewPly = null; // null = follow the latest position
+  let flipped = flippedGames.has(id);
+  let rendered = null; // what the move list showed last time: { moves, events, viewPly }
+  let fresh = null; // the move that just arrived, flashed for a moment: { ply, at }
+  let evaluation = null;
 
   const boardEl = h("div", { class: "board", role: "img" });
+  const evalFill = h("div", { class: "eval-fill" });
+  const evalText = h("span", { class: "eval-label" });
+  const evalBar = h("div", { class: "eval-bar", "aria-live": "off" }, evalFill, evalText);
+  const boardArea = h("div", { class: "board-area" }, h("div", { class: "board-wrap" }, evalBar, boardEl));
   const topBar = h("div", { class: "player-bar" });
   const bottomBar = h("div", { class: "player-bar" });
   const banner = h("div", { class: "banner" });
@@ -274,23 +342,22 @@ function showGame(id) {
   const actions = h("div", { class: "actions" });
   const moveList = h("ol", { class: "moves" });
   const nav = h("div", { class: "nav" });
-
-  app.replaceChildren(
-    h(
-      "div",
-      { class: "game" },
-      h("div", { class: "game-head" }, h("div", {}, title, meta), actions),
-      banner,
-      h("div", { class: "game-body" }, h("div", { class: "board-col" }, topBar, boardEl, bottomBar, nav), h("section", { class: "card moves-card" }, h("h3", {}, "Moves and reasoning"), moveList)),
-    ),
-  );
+  const boardCol = h("div", { class: "board-col" }, topBar, boardArea, bottomBar, nav);
+  const body = h("div", { class: "game-body" }, boardCol, h("section", { class: "card moves-card" }, h("h3", {}, "Moves and reasoning"), moveList));
+  const view = h("div", { class: "game" }, h("div", { class: "game-head" }, h("div", {}, title, meta), actions), banner, body);
+  document.body.classList.add("game-page");
 
   const source = new EventSource(`/api/games/${id}/events`);
   source.onmessage = (event) => {
     const data = JSON.parse(event.data);
     offset = Date.parse(data.serverNow) - Date.now();
+    const first = !game;
     game = data.game;
     if (viewPly !== null && viewPly > game.moves.length) viewPly = null;
+    if (first) {
+      app.replaceChildren(view);
+      fitBoard();
+    }
     render();
     // A finished game can still be waiting for a cut-off call's cost.
     if (game.status !== "running" && !game.unfinishedCall) source.close();
@@ -302,12 +369,29 @@ function showGame(id) {
     }
   };
 
+  // The board takes the room the window leaves it: the height of its column next to the moves, or the width on narrow screens.
+  function fitBoard() {
+    const evalWidth = evalBar.offsetWidth + 6;
+    const room = FILL_LAYOUT.matches
+      ? Math.min(boardArea.clientHeight, body.clientWidth - MOVES_MIN_WIDTH - COLUMN_GAP - evalWidth)
+      : Math.min(boardCol.clientWidth - evalWidth, 640);
+    const size = Math.max(200, Math.floor(room / 8) * 8);
+    view.style.setProperty("--board", `${size}px`);
+  }
+  const resize = new ResizeObserver(fitBoard);
+  resize.observe(body);
+  resize.observe(boardArea);
+  FILL_LAYOUT.addEventListener("change", fitBoard);
+
   const tick = setInterval(() => game && renderClocks(), 100);
   const onKey = (e) => {
-    if (!game || e.target.closest("input, select, textarea")) return;
+    if (!game || e.target.closest("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
     const current = viewPly ?? game.moves.length;
     if (e.key === "ArrowLeft") setView(Math.max(0, current - 1));
     else if (e.key === "ArrowRight") setView(Math.min(game.moves.length, current + 1));
+    else if (e.key === "Home") setView(0);
+    else if (e.key === "End") setView(game.moves.length);
+    else if (e.key === "f" || e.key === "F") flip();
     else return;
     e.preventDefault();
   };
@@ -315,11 +399,22 @@ function showGame(id) {
   cleanup = () => {
     source.close();
     clearInterval(tick);
+    resize.disconnect();
+    FILL_LAYOUT.removeEventListener("change", fitBoard);
     document.removeEventListener("keydown", onKey);
+    document.body.classList.remove("game-page");
+    engine?.stop();
   };
 
   function setView(ply) {
     viewPly = ply >= game.moves.length ? null : ply;
+    render();
+  }
+
+  function flip() {
+    flipped = !flipped;
+    if (flipped) flippedGames.add(id);
+    else flippedGames.delete(id);
     render();
   }
 
@@ -359,7 +454,23 @@ function showGame(id) {
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
   }
 
-  function playerBar(bar, color) {
+  function materialRow(color, material) {
+    const taken = material.captured[color];
+    const lead = color === "white" ? material.diff : -material.diff;
+    const pieceColor = color === "white" ? "b" : "w";
+    const groups = PIECE_ORDER.filter((p) => taken.includes(p)).map((p) =>
+      h("span", { class: "taken-group" }, taken.filter((t) => t === p).map(() => h("span", { class: `taken ${pieceColor}` }, GLYPHS[p] + TEXT))),
+    );
+    const names = taken.map((p) => PIECE_NAMES[p]).join(", ");
+    return h(
+      "div",
+      { class: "material", title: taken.length ? `Captured: ${names}` : "" },
+      groups,
+      lead > 0 ? h("span", { class: "lead" }, `+${lead}`) : null,
+    );
+  }
+
+  function playerBar(bar, color, material) {
     bar.dataset.color = color;
     const spec = game[color];
     const illegal = game.illegalMoves[color];
@@ -367,11 +478,20 @@ function showGame(id) {
     setChildren(
       bar,
       h("span", { class: `swatch ${color}` }),
-      h("span", { class: "name" }, spec.model),
-      h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
-      spendBadge(game.spend?.[color]),
-      illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
-      offer ? h("span", { class: "badge" }, "offers a draw") : null,
+      h(
+        "div",
+        { class: "who" },
+        h(
+          "div",
+          { class: "who-line" },
+          h("span", { class: "name" }, spec.model),
+          h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
+          spendBadge(game.spend?.[color]),
+          illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
+          offer ? h("span", { class: "badge" }, "offers a draw") : null,
+        ),
+        materialRow(color, material),
+      ),
       h("span", { class: "clock" }),
     );
   }
@@ -391,7 +511,9 @@ function showGame(id) {
     const stoppable = game.status === "running" || game.status === "paused";
     setChildren(
       actions,
-      h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
+      game.status === "running"
+        ? h("button", { disabled: true, title: "Available once the game is over or paused" }, "Download PGN")
+        : h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
       game.status === "paused"
         ? h(
             "button",
@@ -426,34 +548,75 @@ function showGame(id) {
       banner.textContent = `${capitalize(sideToMove())} (${game[sideToMove()].model}) is thinking…`;
     } else if (game.status === "paused") {
       banner.className = "banner paused";
-      banner.textContent = game.events.findLast((e) => e.type === "paused")?.message ?? "Paused.";
+      banner.textContent = game.events.findLast((e) => e.type === "paused")?.message ?? "Paused: resume the game to continue it.";
     } else {
       banner.className = `banner ${game.status}`;
       banner.replaceChildren(h("strong", {}, game.result), " ", game.termination?.message ?? "");
     }
 
-    playerBar(topBar, "black");
-    playerBar(bottomBar, "white");
-    renderClocks();
-
     const shownPly = viewPly ?? game.moves.length;
     const fen = shownPly === 0 ? game.startFen : game.moves[shownPly - 1].fenAfter;
+    const material = materialOf(game, shownPly);
+    const [top, bottom] = flipped ? ["white", "black"] : ["black", "white"];
+    playerBar(topBar, top, material);
+    playerBar(bottomBar, bottom, material);
+    renderClocks();
+
     const last = shownPly > 0 ? game.moves[shownPly - 1].uci : null;
-    renderBoard(boardEl, fen, last);
-    boardEl.setAttribute("aria-label", `Position after ${shownPly} half-moves: ${fen}`);
+    renderBoard(boardEl, fen, last, flipped);
+    boardEl.setAttribute("aria-label", `Position after ${shownPly} half-moves${flipped ? ", from Black's side" : ""}: ${fen}`);
+    renderEval(fen);
 
     nav.replaceChildren(
-      h("button", { onclick: () => setView(0), disabled: shownPly === 0, "aria-label": "Start" }, "⏮"),
-      h("button", { onclick: () => setView(Math.max(0, shownPly - 1)), disabled: shownPly === 0, "aria-label": "Back" }, "◀"),
+      h("button", { onclick: () => setView(0), disabled: shownPly === 0, "aria-label": "Start", title: "Start (Home)" }, "⏮"),
+      h("button", { onclick: () => setView(Math.max(0, shownPly - 1)), disabled: shownPly === 0, "aria-label": "Back", title: "Back (←)" }, "◀"),
       h("span", { class: "muted" }, viewPly === null ? (game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : "Final position") : `After ${shownPly} of ${game.moves.length}`),
-      h("button", { onclick: () => setView(shownPly + 1), disabled: viewPly === null, "aria-label": "Forward" }, "▶"),
-      h("button", { onclick: () => setView(game.moves.length), disabled: viewPly === null, "aria-label": "Latest" }, "⏭"),
+      h("button", { onclick: () => setView(shownPly + 1), disabled: viewPly === null, "aria-label": "Forward", title: "Forward (→)" }, "▶"),
+      h("button", { onclick: () => setView(game.moves.length), disabled: viewPly === null, "aria-label": "Latest", title: "Latest (End)" }, "⏭"),
+      h("button", { class: "flip", onclick: flip, "aria-pressed": String(flipped), "aria-label": "Flip the board", title: "Flip the board (F)" }, "⇅"),
     );
 
     renderMoves(shownPly);
   }
 
+  function renderEval(fen) {
+    evalBar.classList.toggle("flipped", flipped);
+    if (evalBar.dataset.fen !== fen) {
+      evalBar.dataset.fen = fen;
+      evaluation = null;
+      showEval();
+      engine ??= new Engine();
+      engine.analyse(fen, (update) => {
+        if (evalBar.dataset.fen !== fen) return;
+        evaluation = update;
+        showEval();
+      });
+    } else {
+      showEval();
+    }
+  }
+
+  function showEval() {
+    const share = whiteShare(evaluation);
+    evalFill.style.height = `${(share * 100).toFixed(1)}%`;
+    evalText.textContent = evaluation ? evalLabel(evaluation) : "…";
+    const side = favored(evaluation) ?? "white";
+    evalText.className = `eval-label ${side}`;
+    // The label sits at the favored side's end of the bar.
+    evalText.classList.toggle("top", (side === "white") === flipped);
+    evalBar.title = evaluation?.error
+      ? evaluation.error
+      : `Stockfish evaluation${evaluation ? ` at depth ${evaluation.depth}` : ""}. Only you see this; the players don't.`;
+  }
+
   function renderMoves(shownPly) {
+    const before = rendered;
+    rendered = { moves: game.moves.length, events: game.events.length, viewPly };
+    const newMove = before !== null && game.moves.length > before.moves;
+    if (newMove && viewPly === null) fresh = { ply: game.moves.length, at: performance.now() };
+    // Re-renders during the flash continue its animation instead of restarting it.
+    const flashed = fresh && performance.now() - fresh.at < FLASH_MS ? fresh : null;
+
     const items = [];
     const eventItem = (e) =>
       h(
@@ -468,7 +631,12 @@ function showGame(id) {
       items.push(
         h(
           "li",
-          { class: `move ${m.ply === shownPly ? "current" : ""}`, onclick: () => setView(m.ply) },
+          {
+            class: `move${m.ply === shownPly ? " current" : ""}${m.ply === flashed?.ply ? " fresh" : ""}`,
+            style: m.ply === flashed?.ply ? `animation-delay: -${Math.round(performance.now() - flashed.at)}ms` : null,
+            "data-ply": m.ply,
+            onclick: () => setView(m.ply),
+          },
           h(
             "div",
             { class: "move-head" },
@@ -487,40 +655,98 @@ function showGame(id) {
       );
       for (const e of game.events.filter((e) => e.ply === m.ply)) items.push(eventItem(e));
     }
-    const atBottom = moveList.scrollTop + moveList.clientHeight >= moveList.scrollHeight - 30;
     moveList.replaceChildren(...(items.length ? items : [h("li", { class: "muted" }, "No moves yet.")]));
-    if (viewPly === null && atBottom) moveList.scrollTop = moveList.scrollHeight;
-    else if (viewPly !== null) moveList.querySelector(".current")?.scrollIntoView({ block: "nearest" });
+
+    if (viewPly === null) {
+      // Following the game: bring a new move (and whatever came after it) into view.
+      if (before && !newMove && game.events.length === before.events && before.viewPly === null) return;
+      const latest = moveList.querySelector(`li[data-ply="${game.moves.length}"]`);
+      reveal(latest ?? moveList.lastElementChild, moveList.lastElementChild, before !== null);
+    } else if (!before || before.viewPly !== viewPly) {
+      const current = moveList.querySelector(".current");
+      if (current) reveal(current, current, true);
+    }
+  }
+
+  /** Scrolls the move list (never the page) so `last` is visible without hiding the top of `first`. */
+  function reveal(first, last, smooth) {
+    if (!first) return;
+    const margin = 6;
+    let top = moveList.scrollTop;
+    const bottom = last.offsetTop + last.offsetHeight + margin;
+    if (bottom - top > moveList.clientHeight) top = bottom - moveList.clientHeight;
+    if (first.offsetTop - margin < top) top = first.offsetTop - margin;
+    top = Math.max(0, top);
+    if (Math.abs(top - moveList.scrollTop) < 1) return;
+    moveList.scrollTo({ top, behavior: smooth && !REDUCED_MOTION.matches ? "smooth" : "auto" });
   }
 }
 
-function renderBoard(el, fen, lastUci) {
-  const rows = fen.split(" ")[0].split("/");
-  const highlight = new Set(lastUci ? [lastUci.slice(0, 2), lastUci.slice(2, 4)] : []);
-  const squares = [];
-  rows.forEach((row, r) => {
+const PIECE_ORDER = ["p", "n", "b", "r", "q"];
+const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+const PIECE_NAMES = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen" };
+
+/** Piece letters by square ("e4" → "P") from a FEN. */
+function squaresOf(fen) {
+  const squares = {};
+  fen.split(" ")[0].split("/").forEach((row, r) => {
     let file = 0;
     for (const ch of row) {
-      if (/\d/.test(ch)) {
-        for (let i = 0; i < Number(ch); i++) squares.push(square(r, file++, null));
-      } else {
-        squares.push(square(r, file++, ch));
-      }
+      if (/\d/.test(ch)) file += Number(ch);
+      else squares["abcdefgh"[file++] + (8 - r)] = ch;
     }
   });
-  el.replaceChildren(...squares);
-
-  function square(r, f, piece) {
-    const name = "abcdefgh"[f] + (8 - r);
-    const dark = (r + f) % 2 === 1;
-    const cls = ["sq", dark ? "dark" : "light", highlight.has(name) ? "last" : ""].join(" ");
-    const sq = h("div", { class: cls });
-    if (f === 0) sq.append(h("span", { class: "coord rank" }, 8 - r));
-    if (r === 7) sq.append(h("span", { class: "coord file" }, "abcdefgh"[f]));
-    if (piece) {
-      const white = piece === piece.toUpperCase();
-      sq.append(h("span", { class: `piece ${white ? "w" : "b"}` }, GLYPHS[piece.toLowerCase()] + TEXT));
-    }
-    return sq;
-  }
+  return squares;
 }
+
+/**
+ * What each side has captured up to `ply` (lowercase piece letters) and the
+ * material difference in pawns from White's side (promotions included).
+ */
+function materialOf(game, ply) {
+  const captured = { white: [], black: [] };
+  for (let i = 0; i < ply; i++) {
+    const move = game.moves[i];
+    const before = squaresOf(i === 0 ? game.startFen : game.moves[i - 1].fenAfter);
+    const from = move.uci.slice(0, 2);
+    const to = move.uci.slice(2, 4);
+    let victim = before[to];
+    // En passant: a pawn moving diagonally onto an empty square.
+    if (!victim && before[from]?.toLowerCase() === "p" && from[0] !== to[0]) victim = "p";
+    if (victim) captured[move.color].push(victim.toLowerCase());
+  }
+  const fen = ply === 0 ? game.startFen : game.moves[ply - 1].fenAfter;
+  let diff = 0;
+  for (const piece of Object.values(squaresOf(fen))) {
+    const value = PIECE_VALUES[piece.toLowerCase()];
+    diff += piece === piece.toUpperCase() ? value : -value;
+  }
+  return { captured, diff };
+}
+
+function renderBoard(el, fen, lastUci, flipped) {
+  const pieces = squaresOf(fen);
+  const highlight = new Set(lastUci ? [lastUci.slice(0, 2), lastUci.slice(2, 4)] : []);
+  const squares = [];
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      // Rank 8 at the top from White's side, rank 1 from Black's.
+      const r = flipped ? 7 - row : row;
+      const f = flipped ? 7 - col : col;
+      const name = "abcdefgh"[f] + (8 - r);
+      const sq = h("div", { class: `sq ${(r + f) % 2 ? "dark" : "light"}${highlight.has(name) ? " last" : ""}` });
+      if (col === 0) sq.append(h("span", { class: "coord rank" }, 8 - r));
+      if (row === 7) sq.append(h("span", { class: "coord file" }, "abcdefgh"[f]));
+      const piece = pieces[name];
+      if (piece) {
+        const white = piece === piece.toUpperCase();
+        sq.append(h("span", { class: `piece ${white ? "w" : "b"}` }, GLYPHS[piece.toLowerCase()] + TEXT));
+      }
+      squares.push(sq);
+    }
+  }
+  el.replaceChildren(...squares);
+}
+
+window.addEventListener("hashchange", route);
+route();

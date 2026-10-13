@@ -14,6 +14,7 @@
   --sq-light: #eeeed2;
   --sq-dark: #769656;
   --sq-last: rgba(246, 246, 105, 0.75);
+  --flash: rgba(47, 111, 79, 0.28);
   --radius: 10px;
   color-scheme: light;
 }
@@ -34,6 +35,7 @@
     --info-text: #a9c8f2;
     --sq-light: #d8d8c0;
     --sq-dark: #5f7d45;
+    --flash: rgba(79, 163, 122, 0.4);
     color-scheme: dark;
   }
 }
@@ -126,6 +128,13 @@ h3 {
   }
 }
 
+.home-side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
 .new-game {
   display: flex;
   flex-direction: column;
@@ -172,6 +181,7 @@ legend {
 
 input,
 select,
+textarea,
 button,
 .button {
   font: inherit;
@@ -184,6 +194,7 @@ button,
 
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 button:focus-visible,
 .button:focus-visible,
 tr:focus-visible {
@@ -196,6 +207,43 @@ button,
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
+}
+
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import .hint {
+  margin: 0;
+  font-size: 14px;
+}
+
+.import textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.import-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* The file picker opens from its label, styled as a button. */
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.import-actions label:has(+ .file-input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 button:disabled {
@@ -298,9 +346,18 @@ table.games tbody tr:hover {
   margin: 0;
 }
 
+.game {
+  --eval-width: 22px;
+}
+
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.actions button.primary {
+  margin-top: 0;
 }
 
 .banner {
@@ -325,29 +382,150 @@ table.games tbody tr:hover {
 
 .game-body {
   display: grid;
-  grid-template-columns: minmax(280px, 560px) minmax(260px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
-}
-
-@media (max-width: 900px) {
-  .game-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .board-col {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.board-area {
+  display: flex;
+  align-items: center;
+}
+
+.board-wrap {
+  display: flex;
+  gap: 6px;
+}
+
+.eval-bar {
+  position: relative;
+  flex: none;
+  width: var(--eval-width);
+  height: var(--board, 480px);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #403d39;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  cursor: help;
+}
+
+.eval-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 50%;
+  background: #f4f3ef;
+  transition: height 0.4s ease;
+}
+
+.eval-bar.flipped .eval-fill {
+  top: 0;
+  bottom: auto;
+}
+
+.eval-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  color: #403d39;
+}
+
+.eval-label.top {
+  top: 4px;
+  bottom: auto;
+}
+
+.eval-label.black {
+  color: #f4f3ef;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eval-fill {
+    transition: none;
+  }
 }
 
 .player-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
+  height: 48px;
   min-width: 0;
+  padding-left: calc(var(--eval-width) + 6px);
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.who-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.material {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  font-size: 15px;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.taken-group {
+  display: inline-flex;
+}
+
+.taken + .taken {
+  margin-left: -5px;
+}
+
+.taken {
+  font-family: "Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols 2", "Arial Unicode MS", sans-serif;
+}
+
+.taken.w {
+  color: #fff;
+  -webkit-text-stroke: 0.8px #444;
+}
+
+.taken.b {
+  color: #1b1b1b;
+}
+
+@media (prefers-color-scheme: dark) {
+  .taken.b {
+    -webkit-text-stroke: 0.6px #9a9ea5;
+  }
+}
+
+.material .lead {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .player-bar .name {
@@ -400,8 +578,10 @@ table.games tbody tr:hover {
 .board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
-  aspect-ratio: 1;
-  width: 100%;
+  grid-template-rows: repeat(8, 1fr);
+  flex: none;
+  width: var(--board, 480px);
+  height: var(--board, 480px);
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -410,6 +590,8 @@ table.games tbody tr:hover {
 
 .sq {
   position: relative;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -481,6 +663,12 @@ table.games tbody tr:hover {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  padding-left: calc(var(--eval-width) + 6px);
+}
+
+.nav .flip[aria-pressed="true"] {
+  background: var(--info-bg);
+  color: var(--info-text);
 }
 
 .nav span {
@@ -492,16 +680,22 @@ table.games tbody tr:hover {
 .moves-card {
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 160px);
+  max-height: 70vh;
   min-height: 300px;
+  padding-right: 8px;
 }
 
+/* Room for the scrollbar, including overlay scrollbars, so it never covers the text. */
 .moves {
+  position: relative;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 10px 0 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   flex: 1;
+  min-height: 0;
 }
 
 .moves li {
@@ -519,6 +713,27 @@ table.games tbody tr:hover {
 
 .moves li.current {
   background: var(--info-bg);
+}
+
+/* A move that just arrived; FLASH_MS in app.js matches the duration. */
+.moves li.fresh {
+  animation: fresh 1.6s ease-out;
+}
+
+@keyframes fresh {
+  from {
+    background: var(--flash);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  to {
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .moves li.fresh {
+    animation: none;
+  }
 }
 
 .move-head {
@@ -574,4 +789,62 @@ table.games tbody tr:hover {
 td.cost {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * On screens with room for it the game page fits the window: the board takes
+ * the height its column leaves it, and the move list scrolls on its own.
+ */
+@media (min-width: 900px) and (min-height: 560px) {
+  body.game-page {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body.game-page main {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .game {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game .banner {
+    margin: 10px 0 14px;
+  }
+
+  .game-body {
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: auto minmax(320px, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .board-col {
+    min-height: 0;
+    width: calc(var(--board, 480px) + var(--eval-width) + 6px);
+  }
+
+  .board-area {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .moves-card {
+    min-height: 0;
+    max-height: none;
+  }
 }

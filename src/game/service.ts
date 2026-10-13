@@ -1,6 +1,7 @@
 import { parseTimeControl } from "../timeControl.js";
 import type { PlayerFactory } from "../players/llmPlayer.js";
 import { createGameRecord, GameRunner, type GameOptions } from "./game.js";
+import { importPgn } from "./pgnImport.js";
 import { GameStore, summarize, type GameSummary } from "./store.js";
 import type { Color, GameRecord, PlayerSpec } from "./types.js";
 
@@ -91,6 +92,18 @@ export class GameService {
     const runner = new GameRunner(record, players, this.runnerOptions());
     runner.resume();
     this.launch(runner);
+    return record;
+  }
+
+  /**
+   * Saves a game read from a PGN. It keeps the PGN's GameId unless a saved
+   * game already has it. A game without a result comes back paused.
+   */
+  importPgn(pgn: string): GameRecord {
+    const record = importPgn(pgn, (gameId) =>
+      gameId && /^[\w-]+$/.test(gameId) && !this.running.has(gameId) && !this.store.load(gameId) ? gameId : this.store.newId(),
+    );
+    this.store.save(record);
     return record;
   }
 

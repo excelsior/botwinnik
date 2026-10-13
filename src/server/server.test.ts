@@ -196,6 +196,11 @@ describe("admin server", () => {
     assert.equal(page.status, 200);
     assert.match(await page.text(), /<title>Botwinnik<\/title>/);
     assert.equal((await fetch(`${base}/app.js`)).status, 200);
+    const engine = await fetch(`${base}/vendor/stockfish/stockfish-18-lite-single.wasm`);
+    assert.equal(engine.status, 200);
+    assert.equal(engine.headers.get("content-type"), "application/wasm");
+    assert.match(engine.headers.get("cache-control") ?? "", /immutable/);
+    await engine.arrayBuffer();
     assert.equal((await fetch(`${base}/../config.ini`)).status, 404);
     const setup = await (await fetch(`${base}/api/setup`)).json();
     assert.deepEqual(
@@ -294,6 +299,26 @@ describe("admin server", () => {
     const final = await poll(id, (g) => g.status !== "running");
     assert.equal(final.result, "0-1");
     assert.equal((await post(`/api/games/${id}/resume`, {})).status, 409);
+  });
+
+  it("imports a PGN and resumes it when it has no result", async () => {
+    const pgn = `[White "claude-test"]\n[Black "gpt-test"]\n[TimeControl "300+3"]\n[Result "*"]\n\n*\n`;
+    const imported = await post("/api/games/import", { pgn });
+    assert.equal(imported.status, 201);
+    const { game } = await imported.json();
+    assert.equal(game.status, "paused");
+    assert.equal((await post(`/api/games/${game.id}/resume`, {})).status, 200);
+    let final = game;
+    for (let i = 0; i < 100 && final.status !== "finished"; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      final = (await (await fetch(`${base}/api/games/${game.id}`)).json()).game;
+    }
+    assert.equal(final.result, "0-1");
+
+    const bad = await post("/api/games/import", { pgn: "1. e4 e5 2. Ke3 *" });
+    assert.equal(bad.status, 400);
+    assert.match((await bad.json()).error, /doesn't name White's model/);
+    assert.equal((await post("/api/games/import", {})).status, 400);
   });
 
   it("rejects cross-site requests and foreign Host headers", async () => {
