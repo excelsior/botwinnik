@@ -61,6 +61,12 @@ function formatUsd(usd) {
   return usd < 0.1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
+/** Mentions a call the game stopped waiting for whose cost isn't in yet. */
+function unfinishedNote(game) {
+  if (!game.unfinishedCall) return "";
+  return ` so far, waiting for ${game.unfinishedCall === "white" ? "White" : "Black"}'s last call to finish`;
+}
+
 function totalCost(game) {
   const costs = ["white", "black"].map((c) => game.spend?.[c]?.costUsd);
   return costs.some((c) => c === null || c === undefined) ? null : costs[0] + costs[1];
@@ -282,7 +288,8 @@ function showGame(id) {
     game = data.game;
     if (viewPly !== null && viewPly > game.moves.length) viewPly = null;
     render();
-    if (game.status !== "running") source.close();
+    // A finished game can still be waiting for a cut-off call's cost.
+    if (game.status !== "running" && !game.unfinishedCall) source.close();
   };
   source.onerror = () => {
     if (!game) {
@@ -367,7 +374,7 @@ function showGame(id) {
 
   function render() {
     title.textContent = `${game.white.model} vs ${game.black.model}`;
-    meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}`;
+    meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}${unfinishedNote(game)}`;
     meta.title = totalCost(game) === null ? UNKNOWN_PRICE : "";
 
     setChildren(

@@ -57,6 +57,48 @@ describe("game service", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("saves the cost of a call cut off by the clock once it finishes", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      let white: ScriptedPlayer | undefined;
+      const service = new GameService(store, (spec) =>
+        spec.model.startsWith("claude")
+          ? (white = new ScriptedPlayer(spec, [{ hang: true, spend: callSpend(0.25) }]))
+          : new ScriptedPlayer(spec, []),
+      );
+      const game = service.start({ timeControl: "0.001+0", players: [CLAUDE, GPT], firstPlayerColor: "white" });
+      assert.equal((await service.wait(game.id))?.termination?.reason, "timeout");
+      assert.equal(store.load(game.id)?.unfinishedCall, "white");
+
+      white!.release();
+      await service.callsFinished(game.id);
+      const saved = store.load(game.id);
+      assert.equal(saved?.unfinishedCall, undefined);
+      assert.equal(saved?.spend.white.costUsd, 0.25);
+      assert.equal(service.list()[0].costUsd, 0.25);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("forgets calls a previous run was still waiting for", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      const game = createGameRecord({ id: store.newId(), timeControl: parseTimeControl("5+3"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+      game.status = "finished";
+      game.unfinishedCall = "black";
+      store.save(game);
+      assert.equal(new GameService(store, foolsMatePlayers).recoverInterrupted(), 0);
+      const saved = store.load(game.id);
+      assert.equal(saved?.status, "finished");
+      assert.equal(saved?.unfinishedCall, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("admin server", () => {

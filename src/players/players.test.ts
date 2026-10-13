@@ -93,7 +93,7 @@ describe("Claude player", () => {
     const fake = fakeFetch([() => claudeStream(JSON.stringify(DECISION))]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "sk-ant-test", effort: "low", fetch: fake.fn });
     const player = new LlmPlayer({ provider: "anthropic", model: "claude-opus-5-5" }, model, { input: 4, output: 20 });
-    const reply = await player.decide(turn(), new AbortController().signal);
+    const reply = await player.decide(turn());
     assert.deepEqual(reply, {
       ok: true,
       decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
@@ -114,11 +114,10 @@ describe("Claude player", () => {
   it("reports refusals and truncation as unusable replies", async () => {
     const fake = fakeFetch([() => claudeStream("", "refusal"), () => claudeStream('{"reasoning":"', "max_tokens")]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "k", fetch: fake.fn });
-    const signal = new AbortController().signal;
-    const refused = await model.complete({ system: "s", user: "u", signal });
+    const refused = await model.complete({ system: "s", user: "u" });
     assert.equal("problem" in refused && refused.problem, "the model declined to answer");
     assert.deepEqual(refused.usage, { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 20 }, "still billed");
-    const truncated = await model.complete({ system: "s", user: "u", signal });
+    const truncated = await model.complete({ system: "s", user: "u" });
     assert.equal("problem" in truncated && truncated.problem, "the reply was cut off by the token limit");
     assert.equal(truncated.usage?.outputTokens, 20);
     assert.equal(fake.requests[0].body.output_config.effort, undefined);
@@ -130,13 +129,12 @@ describe("Claude player", () => {
       () => errorResponse(400, { type: "error", error: { type: "invalid_request_error", message: "bad" } }),
     ]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "k", fetch: fake.fn });
-    const signal = new AbortController().signal;
-    await assert.rejects(model.complete({ system: "s", user: "u", signal }), (err: Error) => {
+    await assert.rejects(model.complete({ system: "s", user: "u" }), (err: Error) => {
       assert.ok(err instanceof FatalPlayerError);
       assert.equal(err.message, "Anthropic API error 401: invalid x-api-key");
       return true;
     });
-    await assert.rejects(model.complete({ system: "s", user: "u", signal }), FatalPlayerError);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), FatalPlayerError);
   });
 
   it("treats overload as transient (after the SDK's own retries)", async () => {
@@ -144,7 +142,7 @@ describe("Claude player", () => {
     const fake = fakeFetch([overloaded, overloaded, overloaded]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "k", fetch: fake.fn });
     await assert.rejects(
-      model.complete({ system: "s", user: "u", signal: new AbortController().signal }),
+      model.complete({ system: "s", user: "u" }),
       TransientPlayerError,
     );
   });
@@ -155,7 +153,7 @@ describe("ChatGPT player", () => {
     const fake = fakeFetch([() => openaiResponse(JSON.stringify({ ...DECISION, move: "c5", offer_draw: true }))]);
     const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "sk-test", effort: "high", fetch: fake.fn });
     const player = new LlmPlayer({ provider: "openai", model: "gpt-5.6-sol" }, model, { input: 5, output: 30, cachedInput: 0.5 });
-    const reply = await player.decide(turn(), new AbortController().signal);
+    const reply = await player.decide(turn());
     assert.deepEqual(reply, {
       ok: true,
       decision: { action: "move", move: "c5", offerDraw: true, reasoning: "Fighting for the center." },
@@ -193,12 +191,11 @@ describe("ChatGPT player", () => {
     const incomplete = () => openaiResponse('{"reasoning": "', { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } });
     const fake = fakeFetch([refusal, incomplete]);
     const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "k", fetch: fake.fn });
-    const signal = new AbortController().signal;
-    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), {
+    assert.deepEqual(await model.complete({ system: "s", user: "u" }), {
       problem: "the model declined to answer: No.",
       usage: undefined,
     });
-    const incompleteReply = await model.complete({ system: "s", user: "u", signal });
+    const incompleteReply = await model.complete({ system: "s", user: "u" });
     assert.equal("problem" in incompleteReply && incompleteReply.problem, "the reply was cut off (max_output_tokens)");
     assert.equal(incompleteReply.usage?.outputTokens, 400, "still billed");
     assert.equal(fake.requests[0].body.reasoning, undefined);
@@ -210,8 +207,7 @@ describe("ChatGPT player", () => {
     // The SDK retries 429s twice on its own before giving up.
     const fake = fakeFetch([quota, quota, quota, notFound]);
     const model = new OpenAIModel({ model: "gpt-nope", apiKey: "k", fetch: fake.fn });
-    const signal = new AbortController().signal;
-    await assert.rejects(model.complete({ system: "s", user: "u", signal }), FatalPlayerError);
-    await assert.rejects(model.complete({ system: "s", user: "u", signal }), /^Error: OpenAI API error 404: The model does not exist$/);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), FatalPlayerError);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), /^Error: OpenAI API error 404: The model does not exist$/);
   });
 });

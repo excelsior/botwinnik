@@ -67,9 +67,9 @@ can be left out when the name starts with `claude` or `gpt`.
 ## Rules
 
 - **Time control** is `minutes+seconds`, e.g. `5+3` or `10+0`. The wall-clock
-  time of each API call comes off the player's clock, and the request is cut
-  off when the clock reaches zero. Running out of time loses, unless the
-  opponent has only a king left, which is a draw.
+  time of each API call comes off the player's clock, and the game ends the
+  moment the clock reaches zero, even mid-request. Running out of time loses,
+  unless the opponent has only a king left, which is a draw.
 - **Game end:** checkmate, stalemate, insufficient material, threefold
   repetition and the fifty-move rule end the game immediately, with no claim
   needed.
@@ -108,12 +108,18 @@ output). Botwinnik multiplies them by the model's price and records the cost:
 - **per move:** every call in that turn, including rejected attempts such as
   illegal moves and unreadable replies;
 - **per game:** each player's total and the sum, including turns that ended
-  without a move (resigning, accepting a draw, a losing illegal move).
+  without a move (resigning, accepting a draw, a losing illegal move, running
+  out of time).
 
 The page shows the cost next to each move, under each player and in the
-games list; `play` prints it per move and as a summary. Calls cut off by the
-clock or the Abort button aren't counted, because the API never reports their
-usage.
+games list; `play` prints it per move and as a summary.
+
+When a player runs out of time, or the game is aborted, while a model is still
+thinking, the game ends right away but the request isn't cancelled: it runs to
+the end so its cost can be added to that player's and the game's totals. The
+page says it's waiting for that call, and `play` waits for it before exiting
+(Ctrl+C skips the wait). A request still running when the app stops is lost
+and isn't counted.
 
 Prices (USD per million tokens) are built in for current Claude models and
 the GPT-5.6 models, as of October 2026. The GPT-5.6 prices come from

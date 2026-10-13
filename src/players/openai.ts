@@ -29,21 +29,18 @@ export class OpenAIModel implements ModelClient {
     });
   }
 
-  async complete({ system, user, signal }: ModelRequest): Promise<ModelResponse> {
+  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
     try {
-      const response = await this.client.responses.create(
-        {
-          model: this.options.model,
-          instructions: system,
-          input: user,
-          store: false,
-          text: {
-            format: { type: "json_schema", name: "chess_decision", schema: DECISION_SCHEMA, strict: true },
-          },
-          ...(this.options.effort ? { reasoning: { effort: this.options.effort as ReasoningEffort } } : {}),
+      const response = await this.client.responses.create({
+        model: this.options.model,
+        instructions: system,
+        input: user,
+        store: false,
+        text: {
+          format: { type: "json_schema", name: "chess_decision", schema: DECISION_SCHEMA, strict: true },
         },
-        { signal },
-      );
+        ...(this.options.effort ? { reasoning: { effort: this.options.effort as ReasoningEffort } } : {}),
+      });
       const usage: Usage | undefined = response.usage
         ? {
             inputTokens: response.usage.input_tokens,

@@ -338,4 +338,54 @@ describe("costs", () => {
     assert.equal(record.termination?.reason, "timeout");
     assert.equal(record.spend.white.costUsd, 0.3);
   });
+
+  it("records a call cut off by the clock once it finishes", async () => {
+    const saved: (string | undefined)[] = [];
+    const { runner, record, white } = setup([{ hang: true, spend: callSpend(0.5) }], [], {
+      tc: { baseMs: 60, incrementMs: 0 },
+      realTime: true,
+      options: { onUpdate: (g) => saved.push(g.unfinishedCall) },
+    });
+    await runner.run();
+    assert.equal(record.termination?.reason, "timeout");
+    assert.equal(record.unfinishedCall, "white");
+    assert.equal(saved.at(-1), "white", "the game is saved as waiting for the call");
+    assert.equal(record.spend.white.calls, 0);
+
+    white.release();
+    await runner.callsFinished();
+    assert.equal(record.spend.white.costUsd, 0.5);
+    assert.equal(record.spend.white.calls, 1);
+    assert.equal(record.unfinishedCall, undefined);
+    assert.equal(saved.at(-1), undefined, "and saved again once its cost is in");
+    assert.equal(record.result, "0-1", "the late reply doesn't change the game");
+    assert.equal(record.moves.length, 0);
+  });
+
+  it("records a call cut off by aborting the game once it finishes", async () => {
+    const { runner, record, white } = setup([{ hang: true, move: "e4", spend: callSpend(0.2) }], [], { realTime: true });
+    const done = runner.run();
+    await new Promise((r) => setTimeout(r, 20));
+    runner.abort();
+    await done;
+    assert.equal(record.status, "aborted");
+    assert.equal(record.unfinishedCall, "white");
+    white.release();
+    await runner.callsFinished();
+    assert.equal(record.spend.white.costUsd, 0.2);
+    assert.equal(record.unfinishedCall, undefined);
+    assert.equal(record.moves.length, 0);
+  });
+
+  it("stops waiting for a cut-off call that fails", async () => {
+    const { runner, record, white } = setup([{ hang: true, error: new Error("connection reset") }], [], {
+      tc: { baseMs: 60, incrementMs: 0 },
+      realTime: true,
+    });
+    await runner.run();
+    white.release();
+    await runner.callsFinished();
+    assert.equal(record.unfinishedCall, undefined);
+    assert.equal(record.spend.white.calls, 0);
+  });
 });

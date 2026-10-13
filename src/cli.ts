@@ -171,11 +171,18 @@ async function play(service: GameService, values: Record<string, string | boolea
     }
   };
   const unsubscribe = service.subscribe(game.id, print);
-  process.once("SIGINT", () => service.abort(game.id));
+  const onInterrupt = () => service.abort(game.id);
+  process.once("SIGINT", onInterrupt);
   const final = (await service.wait(game.id))!;
   print(final);
   unsubscribe();
+  process.off("SIGINT", onInterrupt);
   console.log(`\n${final.result}  ${final.termination?.message ?? ""}`);
+  if (final.unfinishedCall) {
+    const who = final.unfinishedCall === "white" ? "White" : "Black";
+    console.log(`Waiting for ${who}'s last API call to finish so its cost can be recorded (Ctrl+C to skip)...`);
+    await service.callsFinished(final.id);
+  }
   for (const color of ["white", "black"] as const) {
     const spend = final.spend[color];
     console.log(

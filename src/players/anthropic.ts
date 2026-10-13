@@ -18,8 +18,7 @@ export interface AnthropicModelOptions {
 
 /**
  * Claude via the Messages API, with structured outputs so the reply is always
- * a decision object. Streams so long thinking doesn't hit HTTP timeouts; the
- * game's clock bounds the request through the abort signal.
+ * a decision object. Streams so long thinking doesn't hit HTTP timeouts.
  *
  * Refusal fallbacks are deliberately not enabled: they would let a different
  * model play the move, which defeats the point of a match between models.
@@ -37,21 +36,18 @@ export class AnthropicModel implements ModelClient {
     });
   }
 
-  async complete({ system, user, signal }: ModelRequest): Promise<ModelResponse> {
+  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
     try {
-      const stream = this.client.messages.stream(
-        {
-          model: this.options.model,
-          max_tokens: 64000,
-          system,
-          messages: [{ role: "user", content: user }],
-          output_config: {
-            format: { type: "json_schema", schema: DECISION_SCHEMA },
-            ...(this.options.effort ? { effort: this.options.effort as Effort } : {}),
-          },
+      const stream = this.client.messages.stream({
+        model: this.options.model,
+        max_tokens: 64000,
+        system,
+        messages: [{ role: "user", content: user }],
+        output_config: {
+          format: { type: "json_schema", schema: DECISION_SCHEMA },
+          ...(this.options.effort ? { effort: this.options.effort as Effort } : {}),
         },
-        { signal },
-      );
+      });
       const message = await stream.finalMessage();
       const cacheRead = message.usage.cache_read_input_tokens ?? 0;
       const cacheWrite = message.usage.cache_creation_input_tokens ?? 0;

@@ -34,6 +34,8 @@ type Listener = (game: GameRecord) => void;
 /** Starts games, keeps track of the running ones, saves every change, and notifies watchers. */
 export class GameService {
   private readonly running = new Map<string, { runner: GameRunner; done: Promise<GameRecord> }>();
+  /** Games that are over but whose last call is still running in the background. */
+  private readonly finishing = new Map<string, Promise<void>>();
   private readonly listeners = new Map<string, Set<Listener>>();
 
   constructor(
@@ -42,11 +44,19 @@ export class GameService {
     private readonly options: { random?: () => number; game?: Omit<GameOptions, "onUpdate"> } = {},
   ) {}
 
-  /** Games left "running" on disk by a previous process can't continue; mark them aborted. */
+  /**
+   * Games left "running" on disk by a previous process can't continue; mark
+   * them aborted. Calls that process was still waiting for are lost.
+   */
   recoverInterrupted(): number {
     let count = 0;
     for (const game of this.store.list()) {
-      if (game.status !== "running" || this.running.has(game.id)) continue;
+      if (this.running.has(game.id) || this.finishing.has(game.id)) continue;
+      if (game.unfinishedCall) {
+        delete game.unfinishedCall;
+        this.store.save(game);
+      }
+      if (game.status !== "running") continue;
       game.status = "aborted";
       game.result = "*";
       game.termination = { reason: "aborted", winner: null, message: "Interrupted: the app stopped while the game was running." };
@@ -80,6 +90,9 @@ export class GameService {
       this.changed(record);
     });
     this.running.set(record.id, { runner, done });
+    const finished = done.then(() => runner.callsFinished());
+    this.finishing.set(record.id, finished);
+    void finished.finally(() => this.finishing.delete(record.id));
     return record;
   }
 
@@ -102,6 +115,11 @@ export class GameService {
   async wait(id: string): Promise<GameRecord | undefined> {
     const entry = this.running.get(id);
     return entry ? entry.done : this.store.load(id);
+  }
+
+  /** Resolves when the game has ended and the call it stopped waiting for, if any, has finished. */
+  async callsFinished(id: string): Promise<void> {
+    await this.finishing.get(id);
   }
 
   subscribe(id: string, listener: Listener): () => void {

@@ -113,6 +113,12 @@ export interface GameRecord {
   illegalMoves: Record<Color, number>;
   /** Everything each player's API calls used and cost, including turns that ended without a move. */
   spend: Record<Color, Spend>;
+  /**
+   * Set while the call the game stopped waiting for (the player ran out of
+   * time, or the game was aborted) is still running; its cost is added to
+   * `spend` when it finishes.
+   */
+  unfinishedCall?: Color;
   /** A draw offer the side to move can accept. */
   pendingDrawOffer: Color | null;
   /** Who made the most recent draw offer; that side can't offer again until the other side does. */
@@ -163,7 +169,7 @@ export type PlayerReply = (
 
 export interface Player {
   readonly spec: PlayerSpec;
-  decide(turn: TurnInfo, signal: AbortSignal): Promise<PlayerReply>;
+  decide(turn: TurnInfo): Promise<PlayerReply>;
 }
 
 /** An API failure that retrying won't fix (bad key, unknown model...). The game is aborted. */

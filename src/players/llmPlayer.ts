@@ -8,7 +8,6 @@ import { parseDecision, systemPrompt, turnPrompt } from "./prompt.js";
 export interface ModelRequest {
   system: string;
   user: string;
-  signal: AbortSignal;
 }
 
 /** Either the model's text, or why there is no usable text (refusal, cut off...), plus the tokens used. */
@@ -31,11 +30,10 @@ export class LlmPlayer implements Player {
     private readonly price?: ModelPrice,
   ) {}
 
-  async decide(turn: TurnInfo, signal: AbortSignal): Promise<PlayerReply> {
+  async decide(turn: TurnInfo): Promise<PlayerReply> {
     const response = await this.model.complete({
       system: systemPrompt(turn.color, turn.timeControl),
       user: turnPrompt(turn),
-      signal,
     });
     const spend = spendOf(response.usage, this.price);
     if ("problem" in response) return { ok: false, error: response.problem, spend };

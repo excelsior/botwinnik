@@ -108,6 +108,7 @@ export class GameRunner {
   private readonly abortController = new AbortController();
   /** The turn in progress, so the clock can be stopped from outside (abort). */
   private turn: { color: Color; startedAt: number; clockAtStart: number } | null = null;
+  private unfinishedCall: Promise<void> = Promise.resolve();
 
   constructor(record: GameRecord, players: Record<Color, Player>, options: GameOptions = {}) {
     this.record = record;
@@ -142,6 +143,14 @@ export class GameRunner {
     return this.record;
   }
 
+  /**
+   * Resolves once the call the game stopped waiting for (if any) has finished
+   * and its cost is recorded.
+   */
+  callsFinished(): Promise<void> {
+    return this.unfinishedCall;
+  }
+
   /** Stops a running game without a result. */
   abort(message = "Aborted by the admin."): void {
     if (this.record.status !== "running") return;
@@ -168,7 +177,7 @@ export class GameRunner {
 
       let reply: PlayerReply;
       try {
-        reply = await this.ask(player, this.turnInfo(color, remaining(), feedback), remaining());
+        reply = await this.ask(color, this.turnInfo(color, remaining(), feedback), remaining());
       } catch (err) {
         if (this.record.status !== "running" || err instanceof GameAbortedError) return;
         if (err instanceof DeadlineError) return this.flag(color);
@@ -446,30 +455,48 @@ export class GameRunner {
     };
   }
 
-  /** Asks the player, giving up when its clock runs out or the game is aborted. */
-  private async ask(player: Player, turn: TurnInfo, remainingMs: number): Promise<PlayerReply> {
-    const controller = new AbortController();
+  /**
+   * Asks the player, giving up when its clock runs out or the game is aborted.
+   * A call given up on isn't cancelled: it runs to the end so that what it
+   * cost can still be recorded.
+   */
+  private async ask(color: Color, turn: TurnInfo, remainingMs: number): Promise<PlayerReply> {
+    const call = this.players[color].decide(turn);
     const gameSignal = this.abortController.signal;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onGameAbort: (() => void) | undefined;
     const stop = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new DeadlineError("Out of time"));
-        controller.abort();
-      }, Math.max(0, remainingMs));
-      onGameAbort = () => {
-        reject(new GameAbortedError("Game aborted"));
-        controller.abort();
-      };
+      timer = setTimeout(() => reject(new DeadlineError("Out of time")), Math.max(0, remainingMs));
+      onGameAbort = () => reject(new GameAbortedError("Game aborted"));
       if (gameSignal.aborted) onGameAbort();
       else gameSignal.addEventListener("abort", onGameAbort, { once: true });
     });
     try {
-      return await Promise.race([player.decide(turn, controller.signal), stop]);
+      return await Promise.race([call, stop]);
+    } catch (err) {
+      if (err instanceof DeadlineError || err instanceof GameAbortedError) this.finishInBackground(color, call);
+      throw err;
     } finally {
       clearTimeout(timer);
       if (onGameAbort) gameSignal.removeEventListener("abort", onGameAbort);
     }
+  }
+
+  /** Waits for a call the game no longer needs, then adds what it cost to the player's total. */
+  private finishInBackground(color: Color, call: Promise<PlayerReply>): void {
+    this.record.unfinishedCall = color;
+    if (this.record.status !== "running") this.emit();
+    this.unfinishedCall = call
+      .then(
+        (reply) => {
+          if (reply.spend) this.record.spend[color] = addSpend(this.record.spend[color], reply.spend);
+        },
+        () => {}, // a failed call reports no usage
+      )
+      .finally(() => {
+        delete this.record.unfinishedCall;
+        this.emit();
+      });
   }
 }
 

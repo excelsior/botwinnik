@@ -31,7 +31,7 @@ export type Step =
       invalid?: string;
       /** Throw this error instead of replying. */
       error?: Error;
-      /** Never reply; resolves only when aborted. */
+      /** Don't reply until release() is called. */
       hang?: boolean;
       /** What this call used and cost (overrides the player's default). */
       spend?: Spend;
@@ -40,6 +40,7 @@ export type Step =
 /** A player that replays a fixed list of steps, one per request. */
 export class ScriptedPlayer implements Player {
   readonly turns: TurnInfo[] = [];
+  private releaseHang?: () => void;
 
   constructor(
     readonly spec: PlayerSpec,
@@ -49,7 +50,12 @@ export class ScriptedPlayer implements Player {
     private readonly spendPerCall?: Spend,
   ) {}
 
-  async decide(turn: TurnInfo, signal: AbortSignal): Promise<PlayerReply> {
+  /** Lets a `hang` step reply. */
+  release(): void {
+    this.releaseHang?.();
+  }
+
+  async decide(turn: TurnInfo): Promise<PlayerReply> {
     this.turns.push(turn);
     const step = this.steps.shift();
     if (step === undefined) throw new Error(`${this.spec.model} has no scripted step left`);
@@ -58,10 +64,7 @@ export class ScriptedPlayer implements Player {
       return { ok: true, decision: { action: "move", move: step, offerDraw: false, reasoning: `Playing ${step}.` }, spend };
     }
     if (step.think) this.clock?.advance(step.think);
-    if (step.hang) {
-      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
-      throw new Error("aborted");
-    }
+    if (step.hang) await new Promise<void>((resolve) => (this.releaseHang = resolve));
     if (step.error) throw step.error;
     if (step.invalid) return { ok: false, error: step.invalid, spend };
     return {
