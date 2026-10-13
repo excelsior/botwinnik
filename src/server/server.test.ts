@@ -63,11 +63,22 @@ describe("admin server", () => {
   let dir: string;
   let base: string;
   let close: () => void;
+  let openaiListCalls: () => number;
 
   before(async () => {
     dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
     const service = new GameService(new GameStore(dir), foolsMatePlayers);
-    const server = createServer(service, { providers, loopbackOnly: true });
+    let openaiCalls = 0;
+    const server = createServer(service, {
+      providers,
+      loopbackOnly: true,
+      listModels: async (provider) => {
+        if (provider === "anthropic") return [{ id: "claude-new", name: "Claude New" }, { id: "claude-test", name: "Claude Test" }];
+        openaiCalls++;
+        throw new Error("OpenAI API error 401: Incorrect API key provided");
+      },
+    });
+    openaiListCalls = () => openaiCalls;
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     close = () => {
@@ -100,6 +111,16 @@ describe("admin server", () => {
       ["openai", "anthropic"],
     );
     assert.ok(setup.timeControls.includes("5+3"));
+    const [openai, anthropic] = setup.providers;
+    assert.deepEqual(anthropic.models, [
+      { id: "claude-test", name: "Claude Test" },
+      { id: "claude-new", name: "Claude New" },
+    ]);
+    assert.equal(anthropic.modelsError, undefined);
+    assert.deepEqual(openai.models, [{ id: "gpt-test" }], "falls back to config.ini's list");
+    assert.match(openai.modelsError, /401/);
+    await fetch(`${base}/api/setup`);
+    assert.equal(openaiListCalls(), 1, "a failed fetch isn't retried right away");
   });
 
   it("validates new games", async () => {

@@ -22,7 +22,7 @@ example Claude vs Claude).
 ```ini
 [openai]
 api_key = sk-...
-models = gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna   ; suggestions in the setup form
+models = gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna   ; listed first in the setup form
 effort =                                           ; optional reasoning effort
 
 [anthropic]
@@ -36,9 +36,13 @@ port = 3000
 games_dir = games
 ```
 
-The `models` lists only fill the suggestions in the setup form; any model ID
-can be typed in. Use `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to
-read the file from elsewhere.
+The setup form suggests every model each key can use, fetched from the
+provider's API (OpenAI's list is narrowed to chat models that support
+structured outputs), with the `models` from `config.ini` that the key can use
+listed first. If the list can't be fetched, the form says why and suggests
+just the `models` lists. Any model ID can be typed in either way. Use
+`BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
+elsewhere.
 
 ## Using it
 
@@ -52,6 +56,7 @@ listens on this machine by default.
 ```bash
 npm run botwinnik -- play --time 5+3 --white claude-opus-5-5 --black gpt-5.6-sol
 npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # random colors
+npm run botwinnik -- models   # the models each key can use
 npm run botwinnik -- list
 npm run botwinnik -- pgn <game-id> --out game.pgn
 ```

@@ -1,12 +1,13 @@
 import { writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, type AppConfig } from "./config.js";
+import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, PROVIDERS, type AppConfig } from "./config.js";
 import { moveNumberOf } from "./game/game.js";
 import { toPgn } from "./game/pgn.js";
 import { GameService } from "./game/service.js";
 import { gameSpend, GameStore } from "./game/store.js";
 import type { GameRecord } from "./game/types.js";
 import { playerFactory } from "./players/llmPlayer.js";
+import { canPlay, listModels } from "./players/models.js";
 import { createServer } from "./server/server.js";
 import { formatClock } from "./timeControl.js";
 import { formatUsd } from "./pricing.js";
@@ -20,6 +21,9 @@ const USAGE = `Usage:
       Play a game in the terminal. With --players the colors are drawn at random.
       A model is written as provider:model (openai:gpt-5.6-sol, anthropic:claude-opus-5-5);
       the provider can be left out when the model name gives it away (claude-..., gpt-...).
+
+  botwinnik models
+      List the models each API key can use.
 
   botwinnik list
       List saved games.
@@ -59,6 +63,8 @@ async function main(argv: string[]): Promise<number> {
       return serve(config, service);
     case "play":
       return play(service, values);
+    case "models":
+      return printModels(config);
     case "list":
       for (const g of service.list()) {
         const result = g.status === "running" ? "running" : g.result;
@@ -87,7 +93,11 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
   const interrupted = service.recoverInterrupted();
   if (interrupted) console.log(`Marked ${interrupted} interrupted game(s) as aborted.`);
   const loopbackOnly = ["127.0.0.1", "localhost", "::1"].includes(config.host);
-  const server = createServer(service, { providers: config.providers, loopbackOnly });
+  const server = createServer(service, {
+    providers: config.providers,
+    loopbackOnly,
+    listModels: (provider) => listModels(provider, config.providers[provider]!.apiKey),
+  });
   return new Promise((resolve, reject) => {
     server.on("error", reject);
     server.listen(config.port, config.host, () => {
@@ -99,6 +109,24 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
       console.log(`Games are saved in ${config.gamesDir}`);
     });
   });
+}
+
+async function printModels(config: AppConfig): Promise<number> {
+  let failed = false;
+  for (const provider of PROVIDERS) {
+    const settings = config.providers[provider];
+    if (!settings) continue;
+    console.log(`${PROVIDER_LABELS[provider]}:`);
+    try {
+      for (const m of await listModels(provider, settings.apiKey)) {
+        if (canPlay(provider, m.id)) console.log(`  ${m.id}${m.name ? `  (${m.name})` : ""}`);
+      }
+    } catch (err) {
+      failed = true;
+      console.log(`  Could not list the models: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return failed ? 1 : 0;
 }
 
 async function play(service: GameService, values: Record<string, string | boolean | undefined>): Promise<number> {

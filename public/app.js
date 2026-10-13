@@ -143,17 +143,21 @@ function newGameForm(setup) {
       placeholder: "Model ID",
       "aria-label": `Player ${n} model`,
     });
+    const note = h("p", { class: "muted models-error" });
     const fill = (pick) => {
       const provider = setup.providers.find((p) => p.id === providerSelect.value);
-      list.replaceChildren(...provider.models.map((m) => h("option", { value: m })));
-      model.value = provider.models[Math.min(pick, provider.models.length - 1)] ?? "";
+      list.replaceChildren(...provider.models.map((m) => h("option", { value: m.id }, m.name ?? "")));
+      model.value = provider.models[Math.min(pick, provider.models.length - 1)]?.id ?? "";
+      note.textContent = provider.modelsError
+        ? `Couldn't fetch the model list, so the suggestions come from config.ini. ${provider.modelsError}`
+        : "";
     };
     // With both keys configured, default to one model from each provider.
     if (setup.providers.length > 1) providerSelect.value = setup.providers[defaultIndex % setup.providers.length].id;
     providerSelect.addEventListener("change", () => fill(0));
     fill(setup.providers.length > 1 ? 0 : defaultIndex);
     return {
-      el: h("fieldset", {}, h("legend", {}, `Player ${n}`), h("div", { class: "row" }, providerSelect, model, list)),
+      el: h("fieldset", {}, h("legend", {}, `Player ${n}`), h("div", { class: "row" }, providerSelect, model, list), note),
       value: () => ({ provider: providerSelect.value, model: model.value.trim() }),
     };
   };

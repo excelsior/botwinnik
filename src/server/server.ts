@@ -6,6 +6,7 @@ import { PROVIDER_LABELS, PROVIDERS, type AppConfig, type Provider } from "../co
 import { toPgn } from "../game/pgn.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
 import type { GameRecord } from "../game/types.js";
+import { suggestModels, type ModelOption } from "../players/models.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
 const STATIC_FILES: Record<string, string> = {
@@ -26,6 +27,29 @@ export interface ServerOptions {
   providers: Pick<AppConfig, "providers">["providers"];
   /** Reject requests whose Host header isn't a loopback name (DNS-rebinding guard). */
   loopbackOnly: boolean;
+  /** Fetches the models a provider's key can use; without it the form suggests config.ini's lists. */
+  listModels?: (provider: Provider) => Promise<ModelOption[]>;
+}
+
+const MODEL_LIST_TTL_MS = 10 * 60_000;
+const MODEL_LIST_RETRY_MS = 60_000;
+
+/** The providers' model lists, each kept for a while (a failed fetch for a shorter while). */
+class ModelCatalog {
+  private readonly entries = new Map<Provider, { expires: number; models: Promise<ModelOption[]> }>();
+
+  constructor(private readonly list: (provider: Provider) => Promise<ModelOption[]>) {}
+
+  get(provider: Provider): Promise<ModelOption[]> {
+    const cached = this.entries.get(provider);
+    if (cached && cached.expires > Date.now()) return cached.models;
+    const entry = { expires: Date.now() + MODEL_LIST_TTL_MS, models: this.list(provider) };
+    entry.models.catch(() => {
+      entry.expires = Date.now() + MODEL_LIST_RETRY_MS;
+    });
+    this.entries.set(provider, entry);
+    return entry.models;
+  }
 }
 
 class HttpError extends Error {
@@ -39,8 +63,9 @@ class HttpError extends Error {
 
 /** The admin API and web page. */
 export function createServer(service: GameService, options: ServerOptions): Server {
+  const catalog = options.listModels ? new ModelCatalog(options.listModels) : undefined;
   return createHttpServer((req, res) => {
-    handle(service, options, req, res).catch((err) => {
+    handle(service, options, catalog, req, res).catch((err) => {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) console.error(err);
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
@@ -49,7 +74,13 @@ export function createServer(service: GameService, options: ServerOptions): Serv
   });
 }
 
-async function handle(service: GameService, options: ServerOptions, req: IncomingMessage, res: ServerResponse) {
+async function handle(
+  service: GameService,
+  options: ServerOptions,
+  catalog: ModelCatalog | undefined,
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
   checkOrigin(req, options);
   const url = new URL(req.url ?? "/", "http://localhost");
   const method = req.method ?? "GET";
@@ -66,14 +97,24 @@ async function handle(service: GameService, options: ServerOptions, req: Incomin
 
   // /api/setup
   if (parts[1] === "setup" && parts.length === 2 && method === "GET") {
-    return sendJson(res, 200, {
-      providers: PROVIDERS.filter((p) => options.providers[p]).map((p) => ({
-        id: p,
-        label: PROVIDER_LABELS[p],
-        models: options.providers[p]!.models,
-      })),
-      timeControls: TIME_CONTROL_PRESETS,
-    });
+    const providers = await Promise.all(
+      PROVIDERS.filter((p) => options.providers[p]).map(async (p) => {
+        let available: ModelOption[] | undefined;
+        let modelsError: string | undefined;
+        try {
+          available = await catalog?.get(p);
+        } catch (err) {
+          modelsError = err instanceof Error ? err.message : String(err);
+        }
+        return {
+          id: p,
+          label: PROVIDER_LABELS[p],
+          models: suggestModels(p, options.providers[p]!.models, available),
+          ...(modelsError ? { modelsError } : {}),
+        };
+      }),
+    );
+    return sendJson(res, 200, { providers, timeControls: TIME_CONTROL_PRESETS });
   }
 
   if (parts[1] !== "games") throw new HttpError(404, "Not found");

@@ -149,6 +149,16 @@ legend {
   padding: 0 4px;
 }
 
+.models-error {
+  margin: 6px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.models-error:empty {
+  display: none;
+}
+
 .row {
   display: flex;
   gap: 8px;
