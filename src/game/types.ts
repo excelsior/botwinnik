@@ -67,7 +67,9 @@ export type GameEventType =
   | "draw_declined"
   | "draw_accepted"
   | "resignation"
-  | "api_error";
+  | "api_error"
+  | "paused"
+  | "resumed";
 
 export interface GameEvent {
   type: GameEventType;
@@ -84,7 +86,8 @@ export interface GameEvent {
   at: string;
 }
 
-export type GameStatus = "running" | "finished" | "aborted";
+/** "paused": stopped with the clocks frozen (an API account ran out of funds) until resumed. */
+export type GameStatus = "running" | "paused" | "finished" | "aborted";
 
 export interface GameRecord {
   version: 1;
@@ -174,6 +177,9 @@ export interface Player {
 
 /** An API failure that retrying won't fix (bad key, unknown model...). The game is aborted. */
 export class FatalPlayerError extends Error {}
+
+/** The API account has no funds left. The game is paused so it can be resumed after topping up. */
+export class OutOfFundsError extends FatalPlayerError {}
 
 /** A failure that may go away on retry (rate limit, overload, network). Retried on the player's clock. */
 export class TransientPlayerError extends Error {}

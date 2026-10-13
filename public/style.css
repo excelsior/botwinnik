@@ -317,7 +317,8 @@ table.games tbody tr:hover {
   color: var(--text);
 }
 
-.banner.aborted {
+.banner.aborted,
+.banner.paused {
   background: var(--warn-bg);
   color: var(--warn-text);
 }

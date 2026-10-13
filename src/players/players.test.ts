@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Chess } from "chess.js";
-import { FatalPlayerError, TransientPlayerError, type TurnInfo } from "../game/types.js";
+import { FatalPlayerError, OutOfFundsError, TransientPlayerError, type TurnInfo } from "../game/types.js";
 import { illegalMoveBonusMs, parseTimeControl, timeCategory } from "../timeControl.js";
 import { AnthropicModel } from "./anthropic.js";
 import { LlmPlayer } from "./llmPlayer.js";
@@ -137,6 +137,26 @@ describe("Claude player", () => {
     await assert.rejects(model.complete({ system: "s", user: "u" }), FatalPlayerError);
   });
 
+  it("recognizes an account that is out of credit", async () => {
+    const fake = fakeFetch([
+      () => errorResponse(402, { type: "error", error: { type: "billing_error", message: "Your account has no credit left." } }),
+      () =>
+        errorResponse(400, {
+          type: "error",
+          error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." },
+        }),
+      () => errorResponse(400, { type: "error", error: { type: "invalid_request_error", message: "bad" } }),
+    ]);
+    const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "k", fetch: fake.fn });
+    await assert.rejects(model.complete({ system: "s", user: "u" }), (err: Error) => {
+      assert.ok(err instanceof OutOfFundsError);
+      assert.equal(err.message, "Anthropic API error 402: Your account has no credit left.");
+      return true;
+    });
+    await assert.rejects(model.complete({ system: "s", user: "u" }), OutOfFundsError);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), (err) => !(err instanceof OutOfFundsError));
+  });
+
   it("treats overload as transient (after the SDK's own retries)", async () => {
     const overloaded = () => errorResponse(529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
     const fake = fakeFetch([overloaded, overloaded, overloaded]);
@@ -201,13 +221,17 @@ describe("ChatGPT player", () => {
     assert.equal(fake.requests[0].body.reasoning, undefined);
   });
 
-  it("classifies API errors, including an exhausted quota", async () => {
+  it("classifies API errors, recognizing an exhausted quota as out of funds", async () => {
     const quota = () => errorResponse(429, { error: { message: "You exceeded your current quota", type: "insufficient_quota", code: "insufficient_quota" } });
     const notFound = () => errorResponse(404, { error: { message: "The model does not exist", type: "invalid_request_error", code: "model_not_found" } });
     // The SDK retries 429s twice on its own before giving up.
     const fake = fakeFetch([quota, quota, quota, notFound]);
     const model = new OpenAIModel({ model: "gpt-nope", apiKey: "k", fetch: fake.fn });
-    await assert.rejects(model.complete({ system: "s", user: "u" }), FatalPlayerError);
-    await assert.rejects(model.complete({ system: "s", user: "u" }), /^Error: OpenAI API error 404: The model does not exist$/);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), OutOfFundsError);
+    await assert.rejects(model.complete({ system: "s", user: "u" }), (err: Error) => {
+      assert.ok(err instanceof FatalPlayerError && !(err instanceof OutOfFundsError));
+      assert.equal(err.message, "OpenAI API error 404: The model does not exist");
+      return true;
+    });
   });
 });

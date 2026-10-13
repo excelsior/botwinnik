@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ReasoningEffort } from "openai/resources/shared";
-import { FatalPlayerError, TransientPlayerError } from "../game/types.js";
+import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -73,7 +73,7 @@ export function classifyOpenAIError(err: unknown): unknown {
     const status = err.status ?? 0;
     const body = err.error as { message?: string } | undefined;
     const detail = `OpenAI API error ${status}: ${body?.message ?? err.message}`;
-    if (err.code === "insufficient_quota") return new FatalPlayerError(detail);
+    if (err.code === "insufficient_quota" || status === 402) return new OutOfFundsError(detail);
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
     return new FatalPlayerError(detail);
   }

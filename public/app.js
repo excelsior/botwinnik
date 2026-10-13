@@ -243,7 +243,11 @@ function gamesTable(games) {
             h(
               "td",
               { title: g.termination ?? "" },
-              g.status === "running" ? h("span", { class: "badge live" }, "Live") : h("span", { class: "result" }, g.result),
+              g.status === "running"
+                ? h("span", { class: "badge live" }, "Live")
+                : g.status === "paused"
+                  ? h("span", { class: "badge warn" }, "Paused")
+                  : h("span", { class: "result" }, g.result),
               g.status === "aborted" ? h("span", { class: "muted" }, " aborted") : null,
             ),
           ),
@@ -377,21 +381,39 @@ function showGame(id) {
     meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}${unfinishedNote(game)}`;
     meta.title = totalCost(game) === null ? UNKNOWN_PRICE : "";
 
+    const post = async (action) => {
+      try {
+        await api(`/games/${game.id}/${action}`, { method: "POST", body: "{}" });
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+    const stoppable = game.status === "running" || game.status === "paused";
     setChildren(
       actions,
       h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
-      game.status === "running"
+      game.status === "paused"
+        ? h(
+            "button",
+            {
+              class: "primary",
+              onclick: async () => {
+                await post("resume");
+                route(); // reconnect to the live updates, which stop while paused
+              },
+            },
+            "Resume",
+          )
+        : null,
+      stoppable
         ? h(
             "button",
             {
               class: "danger",
               onclick: async () => {
                 if (!confirm("Abort this game? It will be saved without a result.")) return;
-                try {
-                  await api(`/games/${game.id}/abort`, { method: "POST", body: "{}" });
-                } catch (err) {
-                  alert(err.message);
-                }
+                await post("abort");
+                if (game.status === "paused") route();
               },
             },
             "Abort",
@@ -402,6 +424,9 @@ function showGame(id) {
     if (game.status === "running") {
       banner.className = "banner live";
       banner.textContent = `${capitalize(sideToMove())} (${game[sideToMove()].model}) is thinking…`;
+    } else if (game.status === "paused") {
+      banner.className = "banner paused";
+      banner.textContent = game.events.findLast((e) => e.type === "paused")?.message ?? "Paused.";
     } else {
       banner.className = `banner ${game.status}`;
       banner.replaceChildren(h("strong", {}, game.result), " ", game.termination?.message ?? "");
@@ -420,7 +445,7 @@ function showGame(id) {
     nav.replaceChildren(
       h("button", { onclick: () => setView(0), disabled: shownPly === 0, "aria-label": "Start" }, "⏮"),
       h("button", { onclick: () => setView(Math.max(0, shownPly - 1)), disabled: shownPly === 0, "aria-label": "Back" }, "◀"),
-      h("span", { class: "muted" }, viewPly === null ? (game.status === "running" ? "Live" : "Final position") : `After ${shownPly} of ${game.moves.length}`),
+      h("span", { class: "muted" }, viewPly === null ? (game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : "Final position") : `After ${shownPly} of ${game.moves.length}`),
       h("button", { onclick: () => setView(shownPly + 1), disabled: viewPly === null, "aria-label": "Forward" }, "▶"),
       h("button", { onclick: () => setView(game.moves.length), disabled: viewPly === null, "aria-label": "Latest" }, "⏭"),
     );

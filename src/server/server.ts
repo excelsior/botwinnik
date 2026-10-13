@@ -151,8 +151,17 @@ async function handle(
   }
 
   if (parts.length === 4 && parts[3] === "abort" && method === "POST") {
-    if (!service.abort(id)) throw new HttpError(409, "The game is not running.");
+    if (!service.abort(id)) throw new HttpError(409, "The game is not running or paused.");
     return sendJson(res, 200, withNow(service.get(id)!));
+  }
+
+  if (parts.length === 4 && parts[3] === "resume" && method === "POST") {
+    if (game.status !== "paused") throw new HttpError(409, "The game is not paused.");
+    try {
+      return sendJson(res, 200, withNow(service.resume(id)));
+    } catch (err) {
+      throw new HttpError(409, err instanceof Error ? err.message : String(err));
+    }
   }
 
   if (parts.length === 4 && parts[3] === "events" && method === "GET") {

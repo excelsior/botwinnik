@@ -22,6 +22,9 @@ const USAGE = `Usage:
       A model is written as provider:model (openai:gpt-5.6-sol, anthropic:claude-opus-5-5);
       the provider can be left out when the model name gives it away (claude-..., gpt-...).
 
+  botwinnik resume <game-id>
+      Continue a game that paused because an API account ran out of funds.
+
   botwinnik models
       List the models each API key can use.
 
@@ -63,11 +66,20 @@ async function main(argv: string[]): Promise<number> {
       return serve(config, service);
     case "play":
       return play(service, values);
+    case "resume": {
+      const paused = service.get(rest[0] ?? "");
+      if (!paused) throw new ConfigError(`No saved game "${rest[0] ?? ""}". Run "botwinnik list" to see the IDs.`);
+      if (paused.status !== "paused") throw new ConfigError(`Game ${paused.id} is not paused.`);
+      const [movesBefore, eventsBefore] = [paused.moves.length, paused.events.length];
+      const game = service.resume(paused.id);
+      console.log(`Resuming game ${game.id}: ${game.white.model} (White) vs ${game.black.model} (Black), ${game.timeControl.label}`);
+      return follow(service, game, movesBefore, eventsBefore);
+    }
     case "models":
       return printModels(config);
     case "list":
       for (const g of service.list()) {
-        const result = g.status === "running" ? "running" : g.result;
+        const result = g.status === "running" || g.status === "paused" ? g.status : g.result;
         console.log(
           `${g.id}  ${g.timeControl.padEnd(6)} ${g.white.model} vs ${g.black.model}  ${result}  ${formatUsd(g.costUsd)}  ${g.termination ?? ""}`,
         );
@@ -151,9 +163,11 @@ async function play(service: GameService, values: Record<string, string | boolea
   const game = service.start(request);
   console.log(`Game ${game.id}: ${game.white.model} (White) vs ${game.black.model} (Black), ${game.timeControl.label} ${game.timeControl.category}`);
   if (game.colorsAssigned === "random") console.log("Colors were drawn at random.");
+  return follow(service, game);
+}
 
-  let printedMoves = 0;
-  let printedEvents = 0;
+/** Prints a game's moves and events as they come until it ends or pauses, then the result and costs. */
+async function follow(service: GameService, game: GameRecord, printedMoves = 0, printedEvents = 0): Promise<number> {
   const print = (g: GameRecord) => {
     while (printedEvents < g.events.length || printedMoves < g.moves.length) {
       const nextEvent = g.events[printedEvents];
@@ -177,6 +191,10 @@ async function play(service: GameService, values: Record<string, string | boolea
   print(final);
   unsubscribe();
   process.off("SIGINT", onInterrupt);
+  if (final.status === "paused") {
+    console.log(`\nContinue with: botwinnik resume ${final.id}`);
+    return 1;
+  }
   console.log(`\n${final.result}  ${final.termination?.message ?? ""}`);
   if (final.unfinishedCall) {
     const who = final.unfinishedCall === "white" ? "White" : "Black";

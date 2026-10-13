@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import { assignColors, GameService } from "../game/service.js";
 import { GameStore } from "../game/store.js";
 import { createGameRecord } from "../game/game.js";
-import type { PlayerSpec } from "../game/types.js";
+import { OutOfFundsError, type PlayerSpec } from "../game/types.js";
 import { callSpend, CLAUDE, GPT, ScriptedPlayer } from "../testing.js";
 import { parseTimeControl } from "../timeControl.js";
 import { createServer } from "./server.js";
@@ -17,8 +17,14 @@ const providers = {
   openai: { apiKey: "k", models: ["gpt-test"] },
 };
 
+/** While set, OpenAI players fail as if their account had run out of funds. */
+let openaiOutOfFunds = false;
+
 /** Fool's mate for whichever model ends up with each color. */
 function foolsMatePlayers(spec: PlayerSpec) {
+  if (openaiOutOfFunds && spec.provider === "openai") {
+    return new ScriptedPlayer(spec, [{ error: new OutOfFundsError("OpenAI API error 429: You exceeded your current quota") }]);
+  }
   const steps = spec.model.startsWith("claude") ? ["f3", "g4"] : ["e5", "Qh4#"];
   return new ScriptedPlayer(spec, [...steps], undefined, callSpend(0.01));
 }
@@ -79,6 +85,50 @@ describe("game service", () => {
       assert.equal(saved?.spend.white.costUsd, 0.25);
       assert.equal(service.list()[0].costUsd, 0.25);
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pauses a game whose player runs out of funds, keeps it paused across restarts, and resumes it", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      openaiOutOfFunds = true;
+      const first = new GameService(store, foolsMatePlayers);
+      const game = first.start({ timeControl: "5+3", players: [CLAUDE, GPT], firstPlayerColor: "white" });
+      assert.equal((await first.wait(game.id))?.status, "paused");
+      assert.equal(store.load(game.id)?.status, "paused");
+
+      // After a restart (a new service on the same folder) it is still paused, and can be resumed.
+      const service = new GameService(store, foolsMatePlayers);
+      assert.equal(service.recoverInterrupted(), 0);
+      assert.equal(store.load(game.id)?.status, "paused");
+      openaiOutOfFunds = false;
+      service.resume(game.id);
+      const final = await service.wait(game.id);
+      assert.equal(final?.result, "0-1");
+      assert.equal(final?.moves.length, 4);
+      assert.throws(() => service.resume(game.id), /not paused/);
+    } finally {
+      openaiOutOfFunds = false;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts a paused game", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      openaiOutOfFunds = true;
+      const service = new GameService(store, foolsMatePlayers);
+      const game = service.start({ timeControl: "5+3", players: [CLAUDE, GPT], firstPlayerColor: "white" });
+      assert.equal((await service.wait(game.id))?.status, "paused");
+      assert.ok(service.abort(game.id));
+      assert.equal(store.load(game.id)?.status, "aborted");
+      assert.equal(store.load(game.id)?.termination?.message, "Aborted by the admin.");
+      assert.ok(!service.abort(game.id));
+    } finally {
+      openaiOutOfFunds = false;
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -216,6 +266,34 @@ describe("admin server", () => {
     const abort = await post(`/api/games/${game.id}/abort`, {});
     assert.equal(abort.status, 409);
     assert.equal((await fetch(`${base}/api/games/nope`)).status, 404);
+  });
+
+  it("pauses a game when an account runs out of funds and resumes it", async () => {
+    const poll = async (id: string, done: (g: { status: string }) => boolean) => {
+      let game;
+      for (let i = 0; i < 100; i++) {
+        game = (await (await fetch(`${base}/api/games/${id}`)).json()).game;
+        if (done(game)) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return game;
+    };
+    openaiOutOfFunds = true;
+    try {
+      const { game } = await (await post("/api/games", { timeControl: "5+3", players: [CLAUDE, GPT], firstPlayerColor: "white" })).json();
+      const paused = await poll(game.id, (g) => g.status === "paused");
+      assert.equal(paused.status, "paused");
+      assert.match(paused.events.at(-1).message, /Black's API account is out of funds/);
+    } finally {
+      openaiOutOfFunds = false;
+    }
+    const list = await (await fetch(`${base}/api/games`)).json();
+    const id = list.find((g: { status: string }) => g.status === "paused").id;
+    const resumed = await post(`/api/games/${id}/resume`, {});
+    assert.equal(resumed.status, 200);
+    const final = await poll(id, (g) => g.status !== "running");
+    assert.equal(final.result, "0-1");
+    assert.equal((await post(`/api/games/${id}/resume`, {})).status, 409);
   });
 
   it("rejects cross-site requests and foreign Host headers", async () => {

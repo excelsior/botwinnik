@@ -4,7 +4,7 @@ import { parseTimeControl, type TimeControl } from "../timeControl.js";
 import { callSpend, CLAUDE, FakeClock, GPT, ScriptedPlayer, type Step } from "../testing.js";
 import type { Spend } from "../pricing.js";
 import { createGameRecord, GameRunner, moveNumberOf, type GameOptions } from "./game.js";
-import { FatalPlayerError, TransientPlayerError } from "./types.js";
+import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "./types.js";
 
 function setup(
   whiteSteps: Step[],
@@ -284,6 +284,53 @@ describe("API failures and aborting", () => {
     await runner.run();
     assert.ok(updates.length >= 3);
     assert.equal(updates.at(-1), 1);
+  });
+});
+
+describe("running out of funds", () => {
+  it("pauses with the clocks stopped, then resumes where it stopped", async () => {
+    const { runner, record, clock } = setup(
+      [{ move: "f3", think: 2000 }],
+      [{ error: new OutOfFundsError("OpenAI API error 429: You exceeded your current quota"), think: 3000 }],
+    );
+    await runner.run();
+    assert.equal(record.status, "paused");
+    assert.equal(record.result, "*");
+    assert.equal(record.termination, null);
+    assert.equal(record.clocks.black, 297_000);
+    assert.equal(record.turnStartedAt, undefined);
+    const paused = record.events.at(-1)!;
+    assert.equal(paused.type, "paused");
+    assert.match(paused.message, /^Paused: Black's API account is out of funds \(.*exceeded your current quota\)/);
+
+    clock.advance(3_600_000); // an hour to add funds; it mustn't come off anyone's clock
+    const white = new ScriptedPlayer(CLAUDE, ["g4"], clock);
+    const black = new ScriptedPlayer(GPT, [{ move: "e5", think: 1000 }, "Qh4#"], clock);
+    const resumed = new GameRunner(record, { white, black }, { now: clock.now, sleep: clock.sleep });
+    resumed.resume();
+    await resumed.run();
+    assert.equal(black.turns[0].myClockMs, 297_000);
+    assert.equal(record.moves[1].clockMs, 299_000, "297s, minus 1s thinking, plus the 3s increment");
+    assert.deepEqual(
+      record.moves.map((m) => m.san),
+      ["f3", "e5", "g4", "Qh4#"],
+    );
+    assert.equal(record.result, "0-1");
+    assert.deepEqual(
+      record.events.map((e) => e.type),
+      ["paused", "resumed"],
+    );
+  });
+
+  it("only resumes a paused game", () => {
+    const { runner } = setup([], []);
+    assert.throws(() => runner.resume(), /not paused/);
+  });
+
+  it("still aborts on other errors that retrying won't fix", async () => {
+    const { runner, record } = setup([{ error: new FatalPlayerError("Anthropic API error 401: invalid x-api-key") }], []);
+    await runner.run();
+    assert.equal(record.status, "aborted");
   });
 });
 

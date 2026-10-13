@@ -29,7 +29,7 @@ export function toPgn(game: GameRecord): string {
     ["WhiteType", "program"],
     ["BlackType", "program"],
     ["TimeControl", pgnTimeControl(game.timeControl)],
-    ["Termination", PGN_TERMINATION[game.termination?.reason ?? ""] ?? (game.status === "running" ? "unterminated" : "normal")],
+    ["Termination", PGN_TERMINATION[game.termination?.reason ?? ""] ?? (game.status === "running" || game.status === "paused" ? "unterminated" : "normal")],
     ["PlyCount", String(game.moves.length)],
     ["UTCTime", `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`],
     ["GameId", game.id],

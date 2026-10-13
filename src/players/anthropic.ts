@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { FatalPlayerError, TransientPlayerError } from "../game/types.js";
+import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -77,6 +77,10 @@ export function classifyAnthropicError(err: unknown): unknown {
     const status = err.status ?? 0;
     const body = err.error as { error?: { message?: string } } | undefined;
     const detail = `Anthropic API error ${status}: ${body?.error?.message ?? err.message}`;
+    // A low balance is a 402 billing_error; older responses were a 400 saying so.
+    if (status === 402 || err.type === "billing_error" || /credit balance is too low/i.test(detail)) {
+      return new OutOfFundsError(detail);
+    }
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
     return new FatalPlayerError(detail);
   }

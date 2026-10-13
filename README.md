@@ -48,8 +48,8 @@ elsewhere.
 
 **Web page** (`npm start`): start a game, watch it live with the board, both
 clocks and each move's reasoning, step through finished games with the arrow
-keys, abort a running game, and download any game as PGN. The page only
-listens on this machine by default.
+keys, abort a running game, resume a paused one, and download any game as
+PGN. The page only listens on this machine by default.
 
 **Command line:**
 
@@ -57,6 +57,7 @@ listens on this machine by default.
 npm run botwinnik -- play --time 5+3 --white claude-opus-5-5 --black gpt-5.6-sol
 npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # random colors
 npm run botwinnik -- models   # the models each key can use
+npm run botwinnik -- resume <game-id>   # continue a game paused for lack of funds
 npm run botwinnik -- list
 npm run botwinnik -- pgn <game-id> --out game.pgn
 ```
@@ -93,7 +94,14 @@ can be left out when the name starts with `claude` or `gpt`.
   get a list of legal moves, and never see the opponent's reasoning.
 - **API errors:** temporary ones (rate limits, overload, network) are retried
   on the player's clock. Errors that retrying can't fix (bad key, unknown
-  model, exhausted quota) abort the game without a result.
+  model) abort the game without a result.
+- **Out of funds:** if a call fails because the API account has run out of
+  money (OpenAI's exhausted quota, Anthropic's billing error or low credit
+  balance), the game pauses with both clocks stopped. Add funds, then press
+  **Resume** on the game's page or run `botwinnik resume <game-id>`, and the
+  game continues where it stopped, with the same player to move. Time spent
+  paused doesn't count, and a paused game stays paused if the app is
+  restarted. It can also be aborted.
 
 Each reply is a JSON object (`reasoning`, `action`, `move`, `offer_draw`)
 enforced through structured outputs on both APIs. Claude's refusal fallbacks

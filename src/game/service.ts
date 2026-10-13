@@ -46,7 +46,8 @@ export class GameService {
 
   /**
    * Games left "running" on disk by a previous process can't continue; mark
-   * them aborted. Calls that process was still waiting for are lost.
+   * them aborted. Calls that process was still waiting for are lost. Paused
+   * games stay paused.
    */
   recoverInterrupted(): number {
     let count = 0;
@@ -57,11 +58,7 @@ export class GameService {
         this.store.save(game);
       }
       if (game.status !== "running") continue;
-      game.status = "aborted";
-      game.result = "*";
-      game.termination = { reason: "aborted", winner: null, message: "Interrupted: the app stopped while the game was running." };
-      game.finishedAt = new Date().toISOString();
-      delete game.turnStartedAt;
+      markAborted(game, "Interrupted: the app stopped while the game was running.");
       this.store.save(game);
       count++;
     }
@@ -80,20 +77,40 @@ export class GameService {
       colorsAssigned,
       startFen: request.startFen,
     });
-    const runner = new GameRunner(record, players, {
-      ...this.options.game,
-      onUpdate: (game) => this.changed(game),
-    });
     this.store.save(record);
-    const done = runner.run().finally(() => {
-      this.running.delete(record.id);
-      this.changed(record);
-    });
-    this.running.set(record.id, { runner, done });
-    const finished = done.then(() => runner.callsFinished());
-    this.finishing.set(record.id, finished);
-    void finished.finally(() => this.finishing.delete(record.id));
+    this.launch(new GameRunner(record, players, this.runnerOptions()));
     return record;
+  }
+
+  /** Continues a paused game where it stopped. */
+  resume(id: string): GameRecord {
+    const record = this.running.get(id)?.runner.record ?? this.store.load(id);
+    if (!record) throw new Error(`No game ${id}`);
+    if (record.status !== "paused") throw new Error("The game is not paused.");
+    const players = { white: this.makePlayer(record.white), black: this.makePlayer(record.black) };
+    const runner = new GameRunner(record, players, this.runnerOptions());
+    runner.resume();
+    this.launch(runner);
+    return record;
+  }
+
+  private runnerOptions(): GameOptions {
+    return { ...this.options.game, onUpdate: (game) => this.changed(game) };
+  }
+
+  private launch(runner: GameRunner): void {
+    const { id } = runner.record;
+    // A resumed game gets a new runner under the same id; only clear our own entries.
+    const done = runner.run().finally(() => {
+      if (this.running.get(id)?.runner === runner) this.running.delete(id);
+      this.changed(runner.record);
+    });
+    this.running.set(id, { runner, done });
+    const finished = done.then(() => runner.callsFinished());
+    this.finishing.set(id, finished);
+    void finished.finally(() => {
+      if (this.finishing.get(id) === finished) this.finishing.delete(id);
+    });
   }
 
   get(id: string): GameRecord | undefined {
@@ -104,10 +121,17 @@ export class GameService {
     return this.store.list().map((g) => summarize(this.running.get(g.id)?.runner.record ?? g));
   }
 
+  /** Stops a running or paused game without a result. */
   abort(id: string): boolean {
     const entry = this.running.get(id);
-    if (!entry) return false;
-    entry.runner.abort();
+    if (entry) {
+      entry.runner.abort();
+      return true;
+    }
+    const game = this.store.load(id);
+    if (game?.status !== "paused") return false;
+    markAborted(game, "Aborted by the admin.");
+    this.changed(game);
     return true;
   }
 
@@ -140,4 +164,12 @@ export class GameService {
     }
     for (const listener of this.listeners.get(game.id) ?? []) listener(game);
   }
+}
+
+function markAborted(game: GameRecord, message: string): void {
+  game.status = "aborted";
+  game.result = "*";
+  game.termination = { reason: "aborted", winner: null, message };
+  game.finishedAt = new Date().toISOString();
+  delete game.turnStartedAt;
 }

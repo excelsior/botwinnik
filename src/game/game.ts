@@ -12,6 +12,7 @@ import {
   colorName,
   FatalPlayerError,
   opponent,
+  OutOfFundsError,
   type Color,
   type GameEvent,
   type GameRecord,
@@ -151,6 +152,13 @@ export class GameRunner {
     return this.unfinishedCall;
   }
 
+  /** Continues a paused game where it stopped; run() then plays on. */
+  resume(): void {
+    if (this.record.status !== "paused") throw new Error("The game is not paused.");
+    this.record.status = "running";
+    this.addEvent({ type: "resumed", color: this.sideToMove, message: "Resumed." });
+  }
+
   /** Stops a running game without a result. */
   abort(message = "Aborted by the admin."): void {
     if (this.record.status !== "running") return;
@@ -181,6 +189,7 @@ export class GameRunner {
       } catch (err) {
         if (this.record.status !== "running" || err instanceof GameAbortedError) return;
         if (err instanceof DeadlineError) return this.flag(color);
+        if (err instanceof OutOfFundsError) return this.pause(color, err.message);
         if (err instanceof FatalPlayerError) {
           this.end("aborted", {
             reason: "error",
@@ -397,6 +406,18 @@ export class GameRunner {
         message: `${colorName(opp)} wins on time.`,
       });
     }
+  }
+
+  /** Freezes both clocks until the game is resumed; nothing else changes. */
+  private pause(color: Color, reason: string): void {
+    this.stopClock();
+    this.record.status = "paused";
+    delete this.record.turnStartedAt;
+    this.addEvent({
+      type: "paused",
+      color,
+      message: `Paused: ${colorName(color)}'s API account is out of funds (${reason.replace(/\.$/, "")}). Add funds, then resume the game.`,
+    });
   }
 
   /** Freezes the running clock at its current value. */
