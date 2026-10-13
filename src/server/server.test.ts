@@ -8,7 +8,7 @@ import { assignColors, GameService } from "../game/service.js";
 import { GameStore } from "../game/store.js";
 import { createGameRecord } from "../game/game.js";
 import type { PlayerSpec } from "../game/types.js";
-import { CLAUDE, GPT, ScriptedPlayer } from "../testing.js";
+import { callSpend, CLAUDE, GPT, ScriptedPlayer } from "../testing.js";
 import { parseTimeControl } from "../timeControl.js";
 import { createServer } from "./server.js";
 
@@ -20,7 +20,7 @@ const providers = {
 /** Fool's mate for whichever model ends up with each color. */
 function foolsMatePlayers(spec: PlayerSpec) {
   const steps = spec.model.startsWith("claude") ? ["f3", "g4"] : ["e5", "Qh4#"];
-  return new ScriptedPlayer(spec, [...steps]);
+  return new ScriptedPlayer(spec, [...steps], undefined, callSpend(0.01));
 }
 
 describe("game service", () => {
@@ -146,7 +146,9 @@ describe("admin server", () => {
     assert.match(await pgn.text(), /\[Result "0-1"\]/);
 
     const list = await (await fetch(`${base}/api/games`)).json();
-    assert.ok(list.some((g: { id: string }) => g.id === game.id));
+    const summary = list.find((g: { id: string }) => g.id === game.id);
+    assert.ok(Math.abs(summary.costUsd - 0.04) < 1e-9, "four moves at $0.01");
+    assert.ok(Math.abs(final.spend.white.costUsd - 0.02) < 1e-9);
 
     const abort = await post(`/api/games/${game.id}/abort`, {});
     assert.equal(abort.status, 409);

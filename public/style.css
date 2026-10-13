@@ -558,3 +558,9 @@ table.games tbody tr:hover {
   background: var(--info-bg);
   color: var(--info-text);
 }
+
+.player-bar .spend,
+td.cost {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}

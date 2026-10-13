@@ -95,11 +95,41 @@ enforced through structured outputs on both APIs. Claude's refusal fallbacks
 are deliberately not enabled, since they would let a different model play the
 move.
 
+## Costs
+
+Both APIs report the tokens each call uses (thinking/reasoning tokens count as
+output). Botwinnik multiplies them by the model's price and records the cost:
+
+- **per move:** every call in that turn, including rejected attempts such as
+  illegal moves and unreadable replies;
+- **per game:** each player's total and the sum, including turns that ended
+  without a move (resigning, accepting a draw, a losing illegal move).
+
+The page shows the cost next to each move, under each player and in the
+games list; `play` prints it per move and as a summary. Calls cut off by the
+clock or the Abort button aren't counted, because the API never reports their
+usage.
+
+Prices (USD per million tokens) are built in for current Claude models and
+the GPT-5.6 models, as of October 2026. The GPT-5.6 prices come from
+third-party listings rather than OpenAI's own page, so check them. Set or
+override any model's price in `config.ini`:
+
+```ini
+[prices]
+; model = input, output[, cached input]
+gpt-5.6-sol = 5, 30, 0.5
+my-fine-tuned-model = 1.25, 10
+```
+
+A model without a price still has its tokens counted, and its cost shows as
+unknown.
+
 ## Saved games and PGN
 
 Every game is saved as `games/<id>.json` after each change, including the
-moves, each move's reasoning, thinking time and clock, and events such as
-illegal moves and draw offers. Games interrupted by stopping the app are
+moves, each move's reasoning, thinking time, clock, tokens and cost, and
+events such as illegal moves and draw offers. Games interrupted by stopping the app are
 marked as aborted the next time it starts.
 
 PGN export includes the standard tags (`TimeControl`, `Termination`,

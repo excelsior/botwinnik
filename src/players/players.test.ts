@@ -72,6 +72,13 @@ function openaiResponse(text: string, extra: Record<string, unknown> = {}): Resp
       },
     ],
     incomplete_details: null,
+    usage: {
+      input_tokens: 1500,
+      input_tokens_details: { cached_tokens: 1024 },
+      output_tokens: 400,
+      output_tokens_details: { reasoning_tokens: 300 },
+      total_tokens: 1900,
+    },
     ...extra,
   };
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -85,11 +92,13 @@ describe("Claude player", () => {
   it("asks for a structured decision and parses it", async () => {
     const fake = fakeFetch([() => claudeStream(JSON.stringify(DECISION))]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "sk-ant-test", effort: "low", fetch: fake.fn });
-    const player = new LlmPlayer({ provider: "anthropic", model: "claude-opus-5-5" }, model);
+    const player = new LlmPlayer({ provider: "anthropic", model: "claude-opus-5-5" }, model, { input: 4, output: 20 });
     const reply = await player.decide(turn(), new AbortController().signal);
     assert.deepEqual(reply, {
       ok: true,
       decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
+      // 10 input tokens at $4/M and 20 output tokens at $20/M.
+      spend: { calls: 1, inputTokens: 10, cachedInputTokens: 0, outputTokens: 20, costUsd: (10 * 4 + 20 * 20) / 1e6 },
     });
     const { url, body } = fake.requests[0];
     assert.match(url, /\/v1\/messages$/);
@@ -106,8 +115,12 @@ describe("Claude player", () => {
     const fake = fakeFetch([() => claudeStream("", "refusal"), () => claudeStream('{"reasoning":"', "max_tokens")]);
     const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "k", fetch: fake.fn });
     const signal = new AbortController().signal;
-    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), { problem: "the model declined to answer" });
-    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), { problem: "the reply was cut off by the token limit" });
+    const refused = await model.complete({ system: "s", user: "u", signal });
+    assert.equal("problem" in refused && refused.problem, "the model declined to answer");
+    assert.deepEqual(refused.usage, { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 20 }, "still billed");
+    const truncated = await model.complete({ system: "s", user: "u", signal });
+    assert.equal("problem" in truncated && truncated.problem, "the reply was cut off by the token limit");
+    assert.equal(truncated.usage?.outputTokens, 20);
     assert.equal(fake.requests[0].body.output_config.effort, undefined);
   });
 
@@ -141,11 +154,19 @@ describe("ChatGPT player", () => {
   it("uses the Responses API with a strict JSON schema", async () => {
     const fake = fakeFetch([() => openaiResponse(JSON.stringify({ ...DECISION, move: "c5", offer_draw: true }))]);
     const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "sk-test", effort: "high", fetch: fake.fn });
-    const player = new LlmPlayer({ provider: "openai", model: "gpt-5.6-sol" }, model);
+    const player = new LlmPlayer({ provider: "openai", model: "gpt-5.6-sol" }, model, { input: 5, output: 30, cachedInput: 0.5 });
     const reply = await player.decide(turn(), new AbortController().signal);
     assert.deepEqual(reply, {
       ok: true,
       decision: { action: "move", move: "c5", offerDraw: true, reasoning: "Fighting for the center." },
+      // 476 fresh input tokens at $5/M, 1024 cached at $0.50/M, 400 output (incl. reasoning) at $30/M.
+      spend: {
+        calls: 1,
+        inputTokens: 1500,
+        cachedInputTokens: 1024,
+        outputTokens: 400,
+        costUsd: (476 * 5 + 1024 * 0.5 + 400 * 30) / 1e6,
+      },
     });
     const { url, body } = fake.requests[0];
     assert.match(url, /\/responses$/);
@@ -173,8 +194,13 @@ describe("ChatGPT player", () => {
     const fake = fakeFetch([refusal, incomplete]);
     const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "k", fetch: fake.fn });
     const signal = new AbortController().signal;
-    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), { problem: "the model declined to answer: No." });
-    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), { problem: "the reply was cut off (max_output_tokens)" });
+    assert.deepEqual(await model.complete({ system: "s", user: "u", signal }), {
+      problem: "the model declined to answer: No.",
+      usage: undefined,
+    });
+    const incompleteReply = await model.complete({ system: "s", user: "u", signal });
+    assert.equal("problem" in incompleteReply && incompleteReply.problem, "the reply was cut off (max_output_tokens)");
+    assert.equal(incompleteReply.usage?.outputTokens, 400, "still billed");
     assert.equal(fake.requests[0].body.reasoning, undefined);
   });
 

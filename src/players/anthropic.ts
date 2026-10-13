@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { FatalPlayerError, TransientPlayerError } from "../game/types.js";
+import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
 
@@ -52,13 +53,21 @@ export class AnthropicModel implements ModelClient {
         { signal },
       );
       const message = await stream.finalMessage();
-      if (message.stop_reason === "refusal") return { problem: "the model declined to answer" };
-      if (message.stop_reason === "max_tokens") return { problem: "the reply was cut off by the token limit" };
+      const cacheRead = message.usage.cache_read_input_tokens ?? 0;
+      const cacheWrite = message.usage.cache_creation_input_tokens ?? 0;
+      const usage: Usage = {
+        inputTokens: message.usage.input_tokens + cacheRead + cacheWrite,
+        cachedInputTokens: cacheRead,
+        cacheWriteTokens: cacheWrite,
+        outputTokens: message.usage.output_tokens,
+      };
+      if (message.stop_reason === "refusal") return { problem: "the model declined to answer", usage };
+      if (message.stop_reason === "max_tokens") return { problem: "the reply was cut off by the token limit", usage };
       const text = message.content
         .filter((block): block is Anthropic.TextBlock => block.type === "text")
         .map((block) => block.text)
         .join("");
-      return text.trim() ? { text } : { problem: "the reply was empty" };
+      return text.trim() ? { text, usage } : { problem: "the reply was empty", usage };
     } catch (err) {
       throw classifyAnthropicError(err);
     }

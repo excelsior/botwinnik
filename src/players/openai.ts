@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ReasoningEffort } from "openai/resources/shared";
 import { FatalPlayerError, TransientPlayerError } from "../game/types.js";
+import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
 
@@ -43,17 +44,25 @@ export class OpenAIModel implements ModelClient {
         },
         { signal },
       );
+      const usage: Usage | undefined = response.usage
+        ? {
+            inputTokens: response.usage.input_tokens,
+            cachedInputTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+            cacheWriteTokens: 0,
+            outputTokens: response.usage.output_tokens,
+          }
+        : undefined;
       for (const item of response.output) {
         if (item.type !== "message") continue;
         for (const part of item.content) {
-          if (part.type === "refusal") return { problem: `the model declined to answer: ${part.refusal}` };
+          if (part.type === "refusal") return { problem: `the model declined to answer: ${part.refusal}`, usage };
         }
       }
       if (response.status === "incomplete") {
-        return { problem: `the reply was cut off (${response.incomplete_details?.reason ?? "incomplete"})` };
+        return { problem: `the reply was cut off (${response.incomplete_details?.reason ?? "incomplete"})`, usage };
       }
       const text = response.output_text;
-      return text?.trim() ? { text } : { problem: "the reply was empty" };
+      return text?.trim() ? { text, usage } : { problem: "the reply was empty", usage };
     } catch (err) {
       throw classifyOpenAIError(err);
     }

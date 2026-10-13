@@ -4,11 +4,12 @@ import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, type AppConf
 import { moveNumberOf } from "./game/game.js";
 import { toPgn } from "./game/pgn.js";
 import { GameService } from "./game/service.js";
-import { GameStore } from "./game/store.js";
+import { gameSpend, GameStore } from "./game/store.js";
 import type { GameRecord } from "./game/types.js";
 import { playerFactory } from "./players/llmPlayer.js";
 import { createServer } from "./server/server.js";
 import { formatClock } from "./timeControl.js";
+import { formatUsd } from "./pricing.js";
 
 const USAGE = `Usage:
   botwinnik serve
@@ -61,7 +62,9 @@ async function main(argv: string[]): Promise<number> {
     case "list":
       for (const g of service.list()) {
         const result = g.status === "running" ? "running" : g.result;
-        console.log(`${g.id}  ${g.timeControl.padEnd(6)} ${g.white.model} vs ${g.black.model}  ${result}  ${g.termination ?? ""}`);
+        console.log(
+          `${g.id}  ${g.timeControl.padEnd(6)} ${g.white.model} vs ${g.black.model}  ${result}  ${formatUsd(g.costUsd)}  ${g.termination ?? ""}`,
+        );
       }
       return 0;
     case "pgn": {
@@ -135,7 +138,8 @@ async function play(service: GameService, values: Record<string, string | boolea
       const m = g.moves[printedMoves++];
       const num = `${moveNumberOf(m)}${m.color === "white" ? "." : "..."}`;
       const offer = m.drawOffered ? " (offers a draw)" : "";
-      console.log(`${num.padStart(5)} ${m.san.padEnd(8)} [${formatClock(m.clockMs)}] ${m.reasoning}${offer}`);
+      const cost = m.spend ? ` ${formatUsd(m.spend.costUsd)}` : "";
+      console.log(`${num.padStart(5)} ${m.san.padEnd(8)} [${formatClock(m.clockMs)}${cost}] ${m.reasoning}${offer}`);
     }
   };
   const unsubscribe = service.subscribe(game.id, print);
@@ -144,6 +148,14 @@ async function play(service: GameService, values: Record<string, string | boolea
   print(final);
   unsubscribe();
   console.log(`\n${final.result}  ${final.termination?.message ?? ""}`);
+  for (const color of ["white", "black"] as const) {
+    const spend = final.spend[color];
+    console.log(
+      `${color === "white" ? "White" : "Black"} (${final[color].model}) spent ${formatUsd(spend.costUsd)}: ` +
+        `${spend.calls} calls, ${spend.inputTokens} input and ${spend.outputTokens} output tokens`,
+    );
+  }
+  console.log(`Total: ${formatUsd(gameSpend(final).costUsd)}`);
   console.log(`Saved as ${final.id}. Export with: botwinnik pgn ${final.id}`);
   return 0;
 }

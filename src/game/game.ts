@@ -6,6 +6,7 @@ import {
   timeControlLabel,
   type TimeControl,
 } from "../timeControl.js";
+import { addSpend, emptySpend, type Spend } from "../pricing.js";
 import { boardDiagram, hasOnlyKing, resolveMove } from "./moves.js";
 import {
   colorName,
@@ -68,6 +69,7 @@ export function createGameRecord(setup: NewGame): GameRecord {
     events: [],
     clocks: { white: tc.baseMs, black: tc.baseMs },
     illegalMoves: { white: 0, black: 0 },
+    spend: { white: emptySpend(), black: emptySpend() },
     pendingDrawOffer: null,
     lastDrawOfferBy: null,
     result: "*",
@@ -159,6 +161,7 @@ export class GameRunner {
     let feedback: string | undefined;
     let invalidReplies = 0;
     let apiFailures = 0;
+    let turnSpend = emptySpend();
 
     while (this.record.status === "running") {
       if (remaining() <= 0) return this.flag(color);
@@ -188,6 +191,10 @@ export class GameRunner {
         continue;
       }
 
+      if (reply.spend) {
+        turnSpend = addSpend(turnSpend, reply.spend);
+        this.record.spend[color] = addSpend(this.record.spend[color], reply.spend);
+      }
       if (remaining() <= 0) return this.flag(color);
 
       const rejectReply = (reason: string): boolean => {
@@ -255,12 +262,12 @@ export class GameRunner {
         continue;
       }
 
-      this.playMove(color, move.lan, decision.offerDraw, decision.reasoning);
+      this.playMove(color, move.lan, decision.offerDraw, decision.reasoning, turnSpend);
       return;
     }
   }
 
-  private playMove(color: Color, uci: string, offerDraw: boolean, reasoning: string): void {
+  private playMove(color: Color, uci: string, offerDraw: boolean, reasoning: string, spend: Spend): void {
     const turn = this.turn!;
     const spent = this.now() - turn.startedAt;
     const move = this.chess.move(uci);
@@ -297,6 +304,7 @@ export class GameRunner {
       thinkingMs: Math.round(spent),
       clockMs: Math.round(this.record.clocks[color]),
       drawOffered,
+      spend,
       at: new Date().toISOString(),
     });
 

@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseTimeControl, type TimeControl } from "../timeControl.js";
-import { CLAUDE, FakeClock, GPT, ScriptedPlayer, type Step } from "../testing.js";
+import { callSpend, CLAUDE, FakeClock, GPT, ScriptedPlayer, type Step } from "../testing.js";
+import type { Spend } from "../pricing.js";
 import { createGameRecord, GameRunner, moveNumberOf, type GameOptions } from "./game.js";
 import { FatalPlayerError, TransientPlayerError } from "./types.js";
 
 function setup(
   whiteSteps: Step[],
   blackSteps: Step[],
-  opts: { tc?: string | TimeControl; fen?: string; realTime?: boolean; options?: GameOptions } = {},
+  opts: {
+    tc?: string | TimeControl;
+    fen?: string;
+    realTime?: boolean;
+    options?: GameOptions;
+    spend?: { white?: Spend; black?: Spend };
+  } = {},
 ) {
   const clock = new FakeClock();
   const tc = typeof opts.tc === "object" ? opts.tc : parseTimeControl(opts.tc ?? "5+3");
@@ -20,8 +27,8 @@ function setup(
     colorsAssigned: "manual",
     startFen: opts.fen,
   });
-  const white = new ScriptedPlayer(CLAUDE, whiteSteps, clock);
-  const black = new ScriptedPlayer(GPT, blackSteps, clock);
+  const white = new ScriptedPlayer(CLAUDE, whiteSteps, clock, opts.spend?.white);
+  const black = new ScriptedPlayer(GPT, blackSteps, clock, opts.spend?.black);
   const runner = new GameRunner(
     record,
     { white, black },
@@ -289,5 +296,46 @@ describe("custom start positions", () => {
     assert.equal(record.moves[0].color, "black");
     assert.equal(moveNumberOf(record.moves[0]), 1);
     assert.equal(record.result, "0-1");
+  });
+});
+
+describe("costs", () => {
+  it("charges every call in a turn to its move, and every call to the player", async () => {
+    const { runner, record } = setup(
+      [{ move: "Ke2", spend: callSpend(0.02, 2000, 300) }, { invalid: "garbled", spend: callSpend(0.01) }, "e4", "d4"],
+      ["e5", { action: "resign", spend: callSpend(0.004) }],
+      { spend: { white: callSpend(0.01), black: callSpend(0.005) } },
+    );
+    await runner.run();
+    const [e4, e5, d4] = record.moves;
+    assert.equal(e4.spend.calls, 3);
+    assert.equal(e4.spend.inputTokens, 4000);
+    assert.equal(e4.spend.outputTokens, 500);
+    assert.ok(Math.abs(e4.spend.costUsd! - 0.04) < 1e-9);
+    assert.deepEqual(e5.spend, callSpend(0.005));
+    assert.deepEqual(d4.spend, callSpend(0.01));
+    // White: 0.04 for e4 + 0.01 for d4. Black: 0.005 for e5 + 0.004 for resigning.
+    assert.ok(Math.abs(record.spend.white.costUsd! - 0.05) < 1e-9);
+    assert.equal(record.spend.white.calls, 4);
+    assert.ok(Math.abs(record.spend.black.costUsd! - 0.009) < 1e-9);
+    assert.equal(record.spend.black.calls, 2);
+  });
+
+  it("keeps counting tokens when a model's price is unknown", async () => {
+    const { runner, record } = setup(["e4"], [{ action: "resign" }], {
+      spend: { white: callSpend(null, 500, 50), black: callSpend(0.001) },
+    });
+    await runner.run();
+    assert.equal(record.moves[0].spend.costUsd, null);
+    assert.equal(record.moves[0].spend.inputTokens, 500);
+    assert.equal(record.spend.white.costUsd, null);
+    assert.equal(record.spend.black.costUsd, 0.001);
+  });
+
+  it("counts a reply that arrived too late", async () => {
+    const { runner, record } = setup([{ move: "e4", think: 400_000, spend: callSpend(0.3) }], []);
+    await runner.run();
+    assert.equal(record.termination?.reason, "timeout");
+    assert.equal(record.spend.white.costUsd, 0.3);
   });
 });

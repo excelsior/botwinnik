@@ -1,4 +1,5 @@
 import type { Provider } from "../config.js";
+import type { Spend } from "../pricing.js";
 import type { TimeCategory } from "../timeControl.js";
 
 export type Color = "white" | "black";
@@ -53,6 +54,8 @@ export interface MoveRecord {
   /** Clock after the move, increment included. */
   clockMs: number;
   drawOffered: boolean;
+  /** Tokens and money spent on this turn, including rejected attempts. */
+  spend: Spend;
   at: string;
 }
 
@@ -108,6 +111,8 @@ export interface GameRecord {
   /** When the current turn started; absent once the game is over. */
   turnStartedAt?: string;
   illegalMoves: Record<Color, number>;
+  /** Everything each player's API calls used and cost, including turns that ended without a move. */
+  spend: Record<Color, Spend>;
   /** A draw offer the side to move can accept. */
   pendingDrawOffer: Color | null;
   /** Who made the most recent draw offer; that side can't offer again until the other side does. */
@@ -147,10 +152,14 @@ export interface TurnInfo {
   feedback?: string;
 }
 
-export type PlayerReply =
+export type PlayerReply = (
   | { ok: true; decision: Decision }
   /** The response could not be read as a decision (bad JSON, refusal, truncated...). */
-  | { ok: false; error: string };
+  | { ok: false; error: string }
+) & {
+  /** What the request used and cost, when known. */
+  spend?: Spend;
+};
 
 export interface Player {
   readonly spec: PlayerSpec;

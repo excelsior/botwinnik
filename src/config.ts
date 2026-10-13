@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import type { ModelPrice } from "./pricing.js";
 
 export const PROVIDERS = ["openai", "anthropic"] as const;
 export type Provider = (typeof PROVIDERS)[number];
@@ -23,6 +24,8 @@ export interface AppConfig {
   host: string;
   port: number;
   gamesDir: string;
+  /** Prices from the [prices] section, keyed by lowercase model ID. */
+  prices: Record<string, ModelPrice>;
 }
 
 export const DEFAULT_MODELS: Record<Provider, string[]> = {
@@ -98,7 +101,24 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     host: app.host?.trim() || "127.0.0.1",
     port,
     gamesDir: path.resolve(baseDir, app.games_dir?.trim() || "games"),
+    prices: parsePrices(ini.prices ?? {}),
   };
+}
+
+/** `model = input, output[, cached input]`, in USD per million tokens. */
+function parsePrices(section: Record<string, string>): Record<string, ModelPrice> {
+  const prices: Record<string, ModelPrice> = {};
+  for (const [model, value] of Object.entries(section)) {
+    const numbers = list(value).map((v) => Number(v.replace(/^\$/, "")));
+    if (numbers.length < 2 || numbers.length > 3 || numbers.some((n) => !Number.isFinite(n) || n < 0)) {
+      throw new ConfigError(
+        `[prices] ${model}: expected "input, output" or "input, output, cached input" in USD per million tokens, got "${value}"`,
+      );
+    }
+    const [input, output, cachedInput] = numbers;
+    prices[model] = cachedInput === undefined ? { input, output } : { input, output, cachedInput };
+  }
+  return prices;
 }
 
 export function defaultConfigPath(): string {

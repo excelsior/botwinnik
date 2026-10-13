@@ -54,6 +54,20 @@ function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/** "$0.0042", "$0.13", "$12.40"; "?" when the model's price is unknown. */
+function formatUsd(usd) {
+  if (usd === null || usd === undefined) return "?";
+  if (usd === 0) return "$0";
+  return usd < 0.1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+}
+
+function totalCost(game) {
+  const costs = ["white", "black"].map((c) => game.spend?.[c]?.costUsd);
+  return costs.some((c) => c === null || c === undefined) ? null : costs[0] + costs[1];
+}
+
+const UNKNOWN_PRICE = "Price unknown for this model: add it under [prices] in config.ini";
+
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -202,7 +216,7 @@ function gamesTable(games) {
     h(
       "table",
       { class: "games" },
-      h("thead", {}, h("tr", {}, ["Started", "White", "Black", "Time", "Moves", "Result"].map((t) => h("th", {}, t)))),
+      h("thead", {}, h("tr", {}, ["Started", "White", "Black", "Time", "Moves", "Cost", "Result"].map((t) => h("th", {}, t)))),
       h(
         "tbody",
         {},
@@ -215,6 +229,7 @@ function gamesTable(games) {
             h("td", {}, g.black.model),
             h("td", {}, g.timeControl),
             h("td", {}, Math.ceil(g.moves / 2)),
+            h("td", { class: "cost", title: g.costUsd === null ? UNKNOWN_PRICE : "" }, formatUsd(g.costUsd)),
             h(
               "td",
               { title: g.termination ?? "" },
@@ -318,6 +333,17 @@ function showGame(id) {
     }
   }
 
+  function spendTitle(spend) {
+    const calls = `${spend.calls} API call${spend.calls === 1 ? "" : "s"}`;
+    const tokens = `${spend.inputTokens.toLocaleString()} input / ${spend.outputTokens.toLocaleString()} output tokens`;
+    return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
+  }
+
+  function spendBadge(spend) {
+    if (!spend) return null;
+    return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
+  }
+
   function playerBar(bar, color) {
     bar.dataset.color = color;
     const spec = game[color];
@@ -328,6 +354,7 @@ function showGame(id) {
       h("span", { class: `swatch ${color}` }),
       h("span", { class: "name" }, spec.model),
       h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
+      spendBadge(game.spend?.[color]),
       illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
       offer ? h("span", { class: "badge" }, "offers a draw") : null,
       h("span", { class: "clock" }),
@@ -336,7 +363,8 @@ function showGame(id) {
 
   function render() {
     title.textContent = `${game.white.model} vs ${game.black.model}`;
-    meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"}`;
+    meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}`;
+    meta.title = totalCost(game) === null ? UNKNOWN_PRICE : "";
 
     setChildren(
       actions,
@@ -411,7 +439,12 @@ function showGame(id) {
             h("span", { class: "num" }, `${moveNumberOf(m)}${m.color === "white" ? "." : "…"}`),
             h("span", { class: "san" }, m.san),
             m.drawOffered ? h("span", { class: "badge" }, "draw offered") : null,
-            h("span", { class: "muted time" }, `${(m.thinkingMs / 1000).toFixed(1)}s · ${formatClock(m.clockMs)}`),
+            h(
+              "span",
+              { class: "muted time", title: m.spend ? spendTitle(m.spend) : "" },
+              `${(m.thinkingMs / 1000).toFixed(1)}s · ${formatClock(m.clockMs)}`,
+              m.spend ? ` · ${formatUsd(m.spend.costUsd)}` : "",
+            ),
           ),
           m.reasoning ? h("p", { class: "reasoning" }, m.reasoning) : null,
         ),

@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { addSpend, emptySpend, type Spend } from "../pricing.js";
 import type { GameRecord } from "./types.js";
 
 export interface GameSummary {
@@ -13,6 +14,13 @@ export interface GameSummary {
   result: GameRecord["result"];
   termination: string | null;
   moves: number;
+  /** USD for both players; null when a model's price is unknown. */
+  costUsd: number | null;
+}
+
+/** Both players' spend added up. */
+export function gameSpend(game: GameRecord): Spend {
+  return addSpend(game.spend?.white ?? emptySpend(), game.spend?.black ?? emptySpend());
 }
 
 /** Saves each game as games/<id>.json, rewriting it after every change. */
@@ -69,5 +77,6 @@ export function summarize(game: GameRecord): GameSummary {
     result: game.result,
     termination: game.termination?.message ?? null,
     moves: game.moves.length,
+    costUsd: gameSpend(game).costUsd,
   };
 }

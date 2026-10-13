@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { Player, PlayerReply, PlayerSpec, TurnInfo } from "../game/types.js";
+import { findPrice, spendOf, type ModelPrice, type Usage } from "../pricing.js";
 import { AnthropicModel } from "./anthropic.js";
 import { OpenAIModel } from "./openai.js";
 import { parseDecision, systemPrompt, turnPrompt } from "./prompt.js";
@@ -10,8 +11,8 @@ export interface ModelRequest {
   signal: AbortSignal;
 }
 
-/** Either the model's text, or why there is no usable text (refusal, cut off...). */
-export type ModelResponse = { text: string } | { problem: string };
+/** Either the model's text, or why there is no usable text (refusal, cut off...), plus the tokens used. */
+export type ModelResponse = ({ text: string } | { problem: string }) & { usage?: Usage };
 
 /**
  * One request to a chat model. Implementations throw FatalPlayerError for
@@ -26,6 +27,8 @@ export class LlmPlayer implements Player {
   constructor(
     readonly spec: PlayerSpec,
     private readonly model: ModelClient,
+    /** USD per million tokens; without it costs are recorded as unknown. */
+    private readonly price?: ModelPrice,
   ) {}
 
   async decide(turn: TurnInfo, signal: AbortSignal): Promise<PlayerReply> {
@@ -34,8 +37,9 @@ export class LlmPlayer implements Player {
       user: turnPrompt(turn),
       signal,
     });
-    if ("problem" in response) return { ok: false, error: response.problem };
-    return parseDecision(response.text);
+    const spend = spendOf(response.usage, this.price);
+    if ("problem" in response) return { ok: false, error: response.problem, spend };
+    return { ...parseDecision(response.text), spend };
   }
 }
 
@@ -49,6 +53,6 @@ export function playerFactory(config: AppConfig): PlayerFactory {
       spec.provider === "anthropic"
         ? new AnthropicModel({ model: spec.model, apiKey: provider.apiKey, effort: provider.effort })
         : new OpenAIModel({ model: spec.model, apiKey: provider.apiKey, effort: provider.effort });
-    return new LlmPlayer(spec, model);
+    return new LlmPlayer(spec, model, findPrice(spec.model, config.prices));
   };
 }
