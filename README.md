@@ -59,7 +59,10 @@ a paused one, download a game as PGN once it is over or paused, and import a
 game from a PGN file on the home page. **Rematch** (on a finished game's page
 or its row in the games list) starts a game between the same two models with
 the same time control, with the colors swapped, kept or drawn at random. The
-page only listens on this machine by default.
+page only listens on this machine by default. After updating Botwinnik (say,
+with `git pull`), restart it; until then the home page shows a reminder,
+because the page updates on reload but the running server doesn't. A restart
+ends games in progress, and paused games are kept.
 
 **Eval bar:** next to the board, Stockfish evaluates the position shown. The
 engine (Stockfish 18 lite, single-threaded WebAssembly, in

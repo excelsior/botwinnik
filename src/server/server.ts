@@ -1,4 +1,5 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import type { GameRecord } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
+const SRC_DIR = fileURLToPath(new URL("../", import.meta.url));
 const STOCKFISH = "vendor/stockfish/stockfish-18-lite-single";
 const STATIC_FILES: Record<string, string> = {
   "/": "index.html",
@@ -41,6 +43,26 @@ export interface ServerOptions {
   loopbackOnly: boolean;
   /** Fetches the models a provider's key can use; without it the form suggests config.ini's lists. */
   listModels?: (provider: Provider) => Promise<ModelOption[]>;
+  /**
+   * Whether the app's code changed on disk after the server started (say, a
+   * git pull). The page is read from disk on every request but the API isn't,
+   * so the page then asks for a restart. Defaults to comparing src/'s files.
+   */
+  codeChanged?: () => boolean;
+}
+
+/** When the newest of the app's source files was last changed. */
+export function newestSourceChange(dir = SRC_DIR): number {
+  let newest = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+    try {
+      newest = Math.max(newest, statSync(path.join(entry.parentPath, entry.name)).mtimeMs);
+    } catch {
+      // removed since the directory was read, mid-update
+    }
+  }
+  return newest;
 }
 
 /** A PGN with long reasoning for every move runs to a few hundred kilobytes. */
@@ -79,6 +101,10 @@ class HttpError extends Error {
 /** The admin API and web page. */
 export function createServer(service: GameService, options: ServerOptions): Server {
   const catalog = options.listModels ? new ModelCatalog(options.listModels) : undefined;
+  if (!options.codeChanged) {
+    const startedWith = newestSourceChange();
+    options = { ...options, codeChanged: () => newestSourceChange() > startedWith };
+  }
   return createHttpServer((req, res) => {
     handle(service, options, catalog, req, res).catch((err) => {
       const status = err instanceof HttpError ? err.status : 500;
@@ -131,7 +157,7 @@ async function handle(
         };
       }),
     );
-    return sendJson(res, 200, { providers, timeControls: TIME_CONTROL_PRESETS });
+    return sendJson(res, 200, { providers, timeControls: TIME_CONTROL_PRESETS, outdated: options.codeChanged?.() ?? false });
   }
 
   // /api/ratings

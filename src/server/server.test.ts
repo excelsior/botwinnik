@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { createGameRecord } from "../game/game.js";
 import { OutOfFundsError, type PlayerSpec } from "../game/types.js";
 import { callSpend, CLAUDE, GPT, ScriptedPlayer } from "../testing.js";
 import { parseTimeControl } from "../timeControl.js";
-import { createServer } from "./server.js";
+import { createServer, newestSourceChange } from "./server.js";
 
 const providers = {
   anthropic: { apiKey: "k", models: ["claude-test"] },
@@ -211,6 +211,7 @@ describe("admin server", () => {
       ["openai", "anthropic"],
     );
     assert.ok(setup.timeControls.includes("5+3"));
+    assert.equal(setup.outdated, false);
     const [openai, anthropic] = setup.providers;
     assert.deepEqual(anthropic.models, [
       { id: "claude-test", name: "Claude Test" },
@@ -221,6 +222,36 @@ describe("admin server", () => {
     assert.match(openai.modelsError, /401/);
     await fetch(`${base}/api/setup`);
     assert.equal(openaiListCalls(), 1, "a failed fetch isn't retried right away");
+  });
+
+  it("tells the page when the code changed after the server started", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-src-"));
+    try {
+      writeFileSync(path.join(dir, "a.ts"), "");
+      mkdirSync(path.join(dir, "game"));
+      writeFileSync(path.join(dir, "game", "b.ts"), "");
+      writeFileSync(path.join(dir, "notes.md"), "");
+      const started = newestSourceChange(dir);
+      const later = new Date(Math.ceil(started) + 60_000);
+      utimesSync(path.join(dir, "notes.md"), later, later);
+      assert.equal(newestSourceChange(dir), started, "only source files count");
+      utimesSync(path.join(dir, "game", "b.ts"), later, later);
+      // Within a millisecond: file times can come back with float rounding.
+      assert.ok(Math.abs(newestSourceChange(dir) - later.getTime()) < 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    const server = createServer(new GameService(new GameStore(dir), foolsMatePlayers), { providers, loopbackOnly: true, codeChanged: () => true });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const setup = await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/setup`)).json();
+      assert.equal(setup.outdated, true);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("validates new games", async () => {

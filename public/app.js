@@ -51,12 +51,16 @@ function setChildren(el, ...children) {
   el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
 }
 
+const RESTART = "restart it (Ctrl+C, then npm start). A restart ends games in progress; paused games are kept.";
+
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
     ...options,
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
   });
   const body = await res.json().catch(() => ({}));
+  // A server started before an update doesn't know the requests the updated page makes.
+  if (res.status === 404 && body.error === "Not found") throw new Error(`The server doesn't handle this yet. If Botwinnik was just updated, ${RESTART}`);
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
   return body;
 }
@@ -139,7 +143,11 @@ async function showHome() {
   }
   const ratingsSection = h("section", { class: "card" }, h("h2", {}, "Ratings"), h("p", { class: "muted" }, "Loading…"));
   const gamesSection = h("section", { class: "card" }, h("h2", {}, "Games"), h("p", { class: "muted" }, "Loading…"));
-  app.replaceChildren(
+  setChildren(
+    app,
+    setup.outdated
+      ? h("div", { class: "banner warn", role: "status" }, `Botwinnik was updated after this server started, so parts of this page may not work until you ${RESTART}`)
+      : null,
     h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), h("div", { class: "home-main" }, ratingsSection, gamesSection)),
   );
 

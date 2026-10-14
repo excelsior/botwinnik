@@ -571,8 +571,14 @@ table.games tbody tr:hover {
   color: var(--text);
 }
 
+/* The home page's notice that the server needs a restart. */
+#app > .banner {
+  margin: 0 0 20px;
+}
+
 .banner.aborted,
-.banner.paused {
+.banner.paused,
+.banner.warn {
   background: var(--warn-bg);
   color: var(--warn-text);
 }
