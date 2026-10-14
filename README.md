@@ -257,8 +257,8 @@ and xAI clients;
 
 The repository started as a TypeScript project for a dev container with
 **Claude Code** and **Codex** preinstalled behind an egress firewall
-(`.devcontainer/init-firewall.sh`, allowing GitHub, npm, Anthropic and OpenAI
-among others). Open the folder in VS Code and run **Dev Containers: Reopen in
+(`.devcontainer/init-firewall.sh`, allowing GitHub, npm and the four model
+APIs among others). Open the folder in VS Code and run **Dev Containers: Reopen in
 Container**, or `devcontainer up --workspace-folder .`.
 
 To start Botwinnik with hot reload whenever the container starts, add
@@ -273,6 +273,7 @@ there, and forward the port:
 
 The script installs the dependencies if they're missing, then runs
 `npm run dev` in the background with its output in `dev-server.log`. Without a
-`config.ini` the server waits, and starts once the file is saved. For Gemini
-and Grok, the firewall also has to allow `generativelanguage.googleapis.com`
-and `api.x.ai`: add them to `ALLOWED_DOMAINS` in `init-firewall.sh`.
+`config.ini` the server waits, and starts once the file is saved. The
+firewall resolves its allowed hosts when the container starts, and the
+container runs the copy of `init-firewall.sh` built into its image: rebuild
+the container after changing `ALLOWED_DOMAINS`.
