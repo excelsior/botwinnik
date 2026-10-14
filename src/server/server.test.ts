@@ -196,6 +196,9 @@ describe("admin server", () => {
     assert.equal(page.status, 200);
     assert.match(await page.text(), /<title>Botwinnik<\/title>/);
     assert.equal((await fetch(`${base}/app.js`)).status, 200);
+    const icon = await fetch(`${base}/favicon.svg`);
+    assert.equal(icon.headers.get("content-type"), "image/svg+xml");
+    assert.match(await icon.text(), /<svg/);
     const engine = await fetch(`${base}/vendor/stockfish/stockfish-18-lite-single.wasm`);
     assert.equal(engine.status, 200);
     assert.equal(engine.headers.get("content-type"), "application/wasm");

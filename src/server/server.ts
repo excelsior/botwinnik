@@ -17,6 +17,9 @@ const STATIC_FILES: Record<string, string> = {
   "/app.js": "app.js",
   "/engine.js": "engine.js",
   "/style.css": "style.css",
+  "/favicon.svg": "favicon.svg",
+  "/favicon.png": "favicon.png",
+  "/favicon.ico": "favicon.png",
   [`/${STOCKFISH}.js`]: `${STOCKFISH}.js`,
   [`/${STOCKFISH}.wasm`]: `${STOCKFISH}.wasm`,
 };
@@ -25,6 +28,8 @@ const CONTENT_TYPES: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".wasm": "application/wasm",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
 };
 
 export const TIME_CONTROL_PRESETS = ["1+0", "3+2", "5+3", "10+0", "15+10", "30+0", "90+30"];

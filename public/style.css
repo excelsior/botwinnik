@@ -56,6 +56,9 @@ a {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -117,7 +120,7 @@ h3 {
 
 .home {
   display: grid;
-  grid-template-columns: minmax(280px, 380px) 1fr;
+  grid-template-columns: minmax(280px, 350px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
@@ -133,6 +136,132 @@ h3 {
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+}
+
+/* Beside the games list the forms stay in view, scrolling on their own when taller than the window. */
+@media (min-width: 821px) {
+  .home-side {
+    position: sticky;
+    top: calc(var(--topbar-height, 59px) + 24px);
+    max-height: calc(100vh - var(--topbar-height, 59px) - 48px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
+
+.model-picker {
+  min-width: 0;
+}
+
+.model-picker input {
+  width: 100%;
+}
+
+.model-list {
+  position: fixed;
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.model-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.model-list li:hover,
+.model-list li.active {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.model-list li[aria-selected="true"] .model-id {
+  font-weight: 600;
+}
+
+.model-list .model-id {
+  overflow-wrap: anywhere;
+}
+
+.model-list .model-name {
+  flex: none;
+  font-size: 13px;
+}
+
+.model-list li.empty {
+  cursor: default;
+  font-size: 13px;
+}
+
+.model-list li.empty:hover {
+  background: none;
+  color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+button.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+td.row-action {
+  text-align: right;
+}
+
+dialog.rematch {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+dialog.rematch::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+dialog.rematch p {
+  margin: 0 0 12px;
+}
+
+.choice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dialog-actions button.primary {
+  margin-top: 0;
 }
 
 .new-game {
@@ -276,7 +405,9 @@ button.danger {
   font-size: 13px;
 }
 
+/* Positioned so hidden labels inside are clipped with the table instead of widening the page. */
 .table-wrap {
+  position: relative;
   overflow-x: auto;
 }
 
@@ -288,7 +419,7 @@ table.games {
 table.games th,
 table.games td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -348,6 +479,16 @@ table.games tbody tr:hover {
 
 .game {
   --eval-width: 22px;
+  --eval-gap: 6px;
+}
+
+.game.no-eval {
+  --eval-width: 0px;
+  --eval-gap: 0px;
+}
+
+.game.no-eval .eval-bar {
+  display: none;
 }
 
 .actions {
@@ -401,7 +542,7 @@ table.games tbody tr:hover {
 
 .board-wrap {
   display: flex;
-  gap: 6px;
+  gap: var(--eval-gap);
 }
 
 .eval-bar {
@@ -431,21 +572,23 @@ table.games tbody tr:hover {
   bottom: auto;
 }
 
+/* Written along the bar, read from bottom to top, so any value fits. */
 .eval-label {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 4px;
-  text-align: center;
-  font-size: 10px;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%) rotate(180deg);
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: -0.3px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   color: #403d39;
 }
 
 .eval-label.top {
-  top: 4px;
+  top: 6px;
   bottom: auto;
 }
 
@@ -465,7 +608,7 @@ table.games tbody tr:hover {
   gap: 8px;
   height: 48px;
   min-width: 0;
-  padding-left: calc(var(--eval-width) + 6px);
+  padding-left: calc(var(--eval-width) + var(--eval-gap));
 }
 
 .who {
@@ -483,11 +626,13 @@ table.games tbody tr:hover {
   white-space: nowrap;
 }
 
+/* Lined up with the name, past the color dot. */
 .material {
   display: flex;
   align-items: center;
   gap: 4px;
   height: 18px;
+  padding-left: 22px;
   font-size: 15px;
   line-height: 1;
   overflow: hidden;
@@ -660,19 +805,27 @@ table.games tbody tr:hover {
 
 .nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding-left: calc(var(--eval-width) + 6px);
+  padding-left: calc(var(--eval-width) + var(--eval-gap));
 }
 
-.nav .flip[aria-pressed="true"] {
+.nav .toggles {
+  display: flex;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.nav .toggle[aria-pressed="true"] {
   background: var(--info-bg);
   color: var(--info-text);
+  border-color: var(--info-bg);
 }
 
-.nav span {
-  min-width: 120px;
+.nav .nav-label {
+  min-width: 110px;
   text-align: center;
   font-size: 13px;
 }
@@ -835,7 +988,7 @@ td.cost {
 
   .board-col {
     min-height: 0;
-    width: calc(var(--board, 480px) + var(--eval-width) + 6px);
+    width: calc(var(--board, 480px) + var(--eval-width) + var(--eval-gap));
   }
 
   .board-area {

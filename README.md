@@ -55,13 +55,16 @@ scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
 move), and flip the board with the ⇅ button or F. Abort a running game, resume
 a paused one, download a game as PGN once it is over or paused, and import a
-game from a PGN file on the home page. The page only listens on this machine
-by default.
+game from a PGN file on the home page. **Rematch** (on a finished game's page
+or its row in the games list) starts a game between the same two models with
+the same time control, with the colors swapped, kept or drawn at random. The
+page only listens on this machine by default.
 
 **Eval bar:** next to the board, Stockfish evaluates the position shown. The
 engine (Stockfish 18 lite, single-threaded WebAssembly, in
 `public/vendor/stockfish/`, GPLv3) runs in your browser only: its evaluation
-never reaches the server or the players' prompts.
+never reaches the server or the players' prompts. Hide or show it with the
+Eval button or E; the choice is remembered in the browser.
 
 **Command line:**
 

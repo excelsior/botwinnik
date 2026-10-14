@@ -8,6 +8,24 @@ let cleanup = () => {};
 let engine = null;
 /** Games shown from Black's side. */
 const flippedGames = new Set();
+const EVAL_SETTING = "botwinnik.evalBar";
+
+/** A setting remembered in this browser; storage can be unavailable (private windows, blocked site data). */
+function loadSetting(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSetting(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // not remembered; the choice still holds on this page
+  }
+}
 
 const GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TEXT = "︎"; // ask for the text (not emoji) form of the chess glyphs
@@ -60,6 +78,14 @@ function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+/** "Oct 13, 11:58 PM" this year, "Oct 13, 2025" before. */
+function formatShortDate(iso) {
+  const date = new Date(iso);
+  return date.getFullYear() === new Date().getFullYear()
+    ? date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : date.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
 /** "$0.0042", "$0.13", "$12.40"; "?" when the model's price is unknown. */
 function formatUsd(usd) {
   if (usd === null || usd === undefined) return "?";
@@ -102,6 +128,7 @@ function route() {
 // ---------------------------------------------------------------- home
 
 async function showHome() {
+  document.title = "Botwinnik";
   app.replaceChildren(h("p", { class: "muted" }, "Loading…"));
   let setup;
   try {
@@ -143,20 +170,12 @@ function newGameForm(setup) {
       { id: `p${n}-provider`, "aria-label": `Player ${n} provider` },
       setup.providers.map((p) => h("option", { value: p.id }, p.label)),
     );
-    const list = h("datalist", { id: `p${n}-models` });
-    const model = h("input", {
-      id: `p${n}-model`,
-      list: `p${n}-models`,
-      required: true,
-      autocomplete: "off",
-      spellcheck: "false",
-      placeholder: "Model ID",
-      "aria-label": `Player ${n} model`,
-    });
+    const picker = modelPicker(`p${n}-model`, `Player ${n} model`);
+    const model = picker.input;
     const note = h("p", { class: "muted models-error" });
     const fill = (pick) => {
       const provider = setup.providers.find((p) => p.id === providerSelect.value);
-      list.replaceChildren(...provider.models.map((m) => h("option", { value: m.id }, m.name ?? "")));
+      picker.setModels(provider.models);
       model.value = provider.models[Math.min(pick, provider.models.length - 1)]?.id ?? "";
       note.textContent = provider.modelsError
         ? `Couldn't fetch the model list, so the suggestions come from config.ini. ${provider.modelsError}`
@@ -167,7 +186,7 @@ function newGameForm(setup) {
     providerSelect.addEventListener("change", () => fill(0));
     fill(setup.providers.length > 1 ? 0 : defaultIndex);
     return {
-      el: h("fieldset", {}, h("legend", {}, `Player ${n}`), h("div", { class: "row" }, providerSelect, model, list), note),
+      el: h("fieldset", {}, h("legend", {}, `Player ${n}`), h("div", { class: "row" }, providerSelect, picker.el), note),
       value: () => ({ provider: providerSelect.value, model: model.value.trim() }),
     };
   };
@@ -220,6 +239,142 @@ function newGameForm(setup) {
     error,
   );
   return form;
+}
+
+/**
+ * A model ID field whose list of known models opens when it gets focus, all
+ * of them at first, then narrowed to what's typed. Any other ID can still be
+ * typed. The list is position: fixed so the scrolling form can't clip it.
+ */
+function modelPicker(id, label) {
+  const listId = `${id}-list`;
+  const input = h("input", {
+    id,
+    required: true,
+    autocomplete: "off",
+    spellcheck: "false",
+    placeholder: "Model ID",
+    role: "combobox",
+    "aria-label": label,
+    "aria-autocomplete": "list",
+    "aria-expanded": "false",
+    "aria-controls": listId,
+  });
+  const list = h("ul", { id: listId, class: "model-list", role: "listbox", "aria-label": label, hidden: true });
+  let models = [];
+  let shown = [];
+  let active = -1;
+  let typed = false; // narrow the list only once something is typed
+
+  const isOpen = () => !list.hidden;
+  const render = () => {
+    const query = input.value.trim().toLowerCase();
+    shown =
+      typed && query
+        ? models.filter((m) => m.id.toLowerCase().includes(query) || (m.name ?? "").toLowerCase().includes(query))
+        : models;
+    if (active >= shown.length) active = shown.length - 1;
+    list.replaceChildren(
+      ...shown.map((m, i) =>
+        h(
+          "li",
+          {
+            id: `${listId}-${i}`,
+            role: "option",
+            class: i === active ? "active" : null,
+            "aria-selected": String(m.id === input.value.trim()),
+            onmousedown: (e) => e.preventDefault(), // keep the focus in the field
+            onclick: () => choose(m),
+          },
+          h("span", { class: "model-id" }, m.id),
+          m.name ? h("span", { class: "muted model-name" }, m.name) : null,
+        ),
+      ),
+    );
+    if (!shown.length) {
+      list.append(h("li", { class: "muted empty" }, models.length ? "No listed model matches; the ID is used as typed." : "No models listed."));
+    }
+    if (active >= 0) {
+      input.setAttribute("aria-activedescendant", `${listId}-${active}`);
+      const item = list.children[active];
+      if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+      else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
+        list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+      }
+    } else input.removeAttribute("aria-activedescendant");
+  };
+  const place = () => {
+    const r = input.getBoundingClientRect();
+    const width = Math.min(Math.max(r.width, 300), innerWidth - 16);
+    const below = innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    const up = below < 180 && above > below;
+    list.style.left = `${Math.max(8, Math.min(r.left, innerWidth - width - 8))}px`;
+    list.style.width = `${width}px`;
+    list.style.maxHeight = `${Math.min(300, up ? above : below)}px`;
+    list.style.top = up ? "auto" : `${r.bottom + 4}px`;
+    list.style.bottom = up ? `${innerHeight - r.top + 4}px` : "auto";
+  };
+  const open = () => {
+    if (isOpen()) return;
+    typed = false;
+    active = models.findIndex((m) => m.id === input.value.trim());
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    place();
+    render();
+    addEventListener("scroll", place, true);
+    addEventListener("resize", place);
+  };
+  const close = () => {
+    if (!isOpen()) return;
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+    removeEventListener("scroll", place, true);
+    removeEventListener("resize", place);
+  };
+  const choose = (m) => {
+    input.value = m.id;
+    close();
+  };
+
+  input.addEventListener("focus", open);
+  input.addEventListener("click", open);
+  input.addEventListener("blur", close);
+  input.addEventListener("input", () => {
+    open();
+    typed = true;
+    active = input.value.trim() ? 0 : -1;
+    render();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!isOpen()) return open();
+      if (!shown.length) return;
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      active = (active + step + shown.length) % shown.length;
+      render();
+    } else if (e.key === "Enter" && isOpen() && active >= 0 && shown[active]) {
+      e.preventDefault(); // pick the model instead of submitting the form
+      choose(shown[active]);
+    } else if (e.key === "Escape" && isOpen()) {
+      e.preventDefault();
+      close();
+    } else if (e.key === "Tab") {
+      close();
+    }
+  });
+
+  return {
+    el: h("div", { class: "model-picker" }, input, list),
+    input,
+    setModels(options) {
+      models = options;
+      if (isOpen()) render();
+    },
+  };
 }
 
 function importForm() {
@@ -278,15 +433,23 @@ function gamesTable(games) {
     h(
       "table",
       { class: "games" },
-      h("thead", {}, h("tr", {}, ["Started", "White", "Black", "Time", "Moves", "Cost", "Result"].map((t) => h("th", {}, t)))),
+      h(
+        "thead",
+        {},
+        h("tr", {}, ["Started", "White", "Black", "Time", "Moves", "Cost", "Result"].map((t) => h("th", {}, t)), h("th", {}, h("span", { class: "visually-hidden" }, "Rematch"))),
+      ),
       h(
         "tbody",
         {},
         games.map((g) =>
           h(
             "tr",
-            { onclick: () => (location.hash = `#/game/${g.id}`), tabindex: 0, onkeydown: (e) => e.key === "Enter" && (location.hash = `#/game/${g.id}`) },
-            h("td", {}, formatDate(g.createdAt)),
+            {
+              onclick: () => (location.hash = `#/game/${g.id}`),
+              tabindex: 0,
+              onkeydown: (e) => e.key === "Enter" && e.target === e.currentTarget && (location.hash = `#/game/${g.id}`),
+            },
+            h("td", { title: formatDate(g.createdAt) }, formatShortDate(g.createdAt)),
             h("td", {}, g.white.model),
             h("td", {}, g.black.model),
             h("td", {}, g.timeControl),
@@ -302,11 +465,89 @@ function gamesTable(games) {
                   : h("span", { class: "result" }, g.result),
               g.status === "aborted" ? h("span", { class: "muted" }, " aborted") : null,
             ),
+            h(
+              "td",
+              { class: "row-action" },
+              g.status === "finished" || g.status === "aborted"
+                ? h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "small",
+                      title: "Start a game between the same models with the same time control",
+                      onclick: (e) => {
+                        e.stopPropagation();
+                        openRematch({ white: g.white, black: g.black, timeControl: g.timeControl });
+                      },
+                    },
+                    "Rematch",
+                  )
+                : null,
+            ),
           ),
         ),
       ),
     ),
   );
+}
+
+/**
+ * Asks how to assign the colors, then starts a game between the same two
+ * models with the same time control. `game` is { white, black, timeControl: "5+3" }.
+ */
+function openRematch(game) {
+  const choices = [
+    ["swap", "Swap colors", `${game.black.model} plays White`],
+    ["same", "Same colors", `${game.white.model} plays White`],
+    ["random", "Random colors", "drawn when the game starts"],
+  ];
+  const error = h("p", { class: "error", role: "alert" });
+  const start = h("button", { type: "submit", class: "primary" }, "Start rematch");
+  const dialog = h("dialog", { class: "card rematch", "aria-labelledby": "rematch-title" });
+  const form = h(
+    "form",
+    {
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        start.disabled = true;
+        const colors = new FormData(form).get("colors");
+        try {
+          const { game: next } = await api("/games", {
+            method: "POST",
+            body: JSON.stringify({
+              timeControl: game.timeControl,
+              players: [game.white, game.black],
+              // The first player is the previous White.
+              firstPlayerColor: colors === "swap" ? "black" : colors === "same" ? "white" : "random",
+            }),
+          });
+          dialog.close();
+          location.hash = `#/game/${next.id}`;
+        } catch (err) {
+          error.textContent = err.message;
+        } finally {
+          start.disabled = false;
+        }
+      },
+    },
+    h("h2", { id: "rematch-title" }, "Rematch"),
+    h("p", { class: "muted" }, `${game.white.model} vs ${game.black.model}, ${game.timeControl}`),
+    h(
+      "fieldset",
+      {},
+      h("legend", {}, "Colors"),
+      choices.map(([value, name, detail], i) =>
+        h("label", { class: "choice" }, h("input", { type: "radio", name: "colors", value, checked: i === 0 }), h("span", {}, h("strong", {}, name), h("span", { class: "muted" }, ` · ${detail}`))),
+      ),
+    ),
+    h("div", { class: "dialog-actions" }, h("button", { type: "button", onclick: () => dialog.close() }, "Cancel"), start),
+    error,
+  );
+  dialog.append(form);
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
 }
 
 // ---------------------------------------------------------------- game view
@@ -320,6 +561,7 @@ const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
 const FLASH_MS = 1600;
 
 function showGame(id) {
+  document.title = "Botwinnik";
   app.replaceChildren(h("p", { class: "muted" }, "Loading…"));
   let game = null;
   let offset = 0; // server clock minus local clock
@@ -328,6 +570,7 @@ function showGame(id) {
   let rendered = null; // what the move list showed last time: { moves, events, viewPly }
   let fresh = null; // the move that just arrived, flashed for a moment: { ply, at }
   let evaluation = null;
+  let evalOn = loadSetting(EVAL_SETTING, "on") !== "off";
 
   const boardEl = h("div", { class: "board", role: "img" });
   const evalFill = h("div", { class: "eval-fill" });
@@ -344,7 +587,7 @@ function showGame(id) {
   const nav = h("div", { class: "nav" });
   const boardCol = h("div", { class: "board-col" }, topBar, boardArea, bottomBar, nav);
   const body = h("div", { class: "game-body" }, boardCol, h("section", { class: "card moves-card" }, h("h3", {}, "Moves and reasoning"), moveList));
-  const view = h("div", { class: "game" }, h("div", { class: "game-head" }, h("div", {}, title, meta), actions), banner, body);
+  const view = h("div", { class: `game${evalOn ? "" : " no-eval"}` }, h("div", { class: "game-head" }, h("div", {}, title, meta), actions), banner, body);
   document.body.classList.add("game-page");
 
   const source = new EventSource(`/api/games/${id}/events`);
@@ -371,7 +614,7 @@ function showGame(id) {
 
   // The board takes the room the window leaves it: the height of its column next to the moves, or the width on narrow screens.
   function fitBoard() {
-    const evalWidth = evalBar.offsetWidth + 6;
+    const evalWidth = evalOn ? evalBar.offsetWidth + 6 : 0;
     const room = FILL_LAYOUT.matches
       ? Math.min(boardArea.clientHeight, body.clientWidth - MOVES_MIN_WIDTH - COLUMN_GAP - evalWidth)
       : Math.min(boardCol.clientWidth - evalWidth, 640);
@@ -385,13 +628,14 @@ function showGame(id) {
 
   const tick = setInterval(() => game && renderClocks(), 100);
   const onKey = (e) => {
-    if (!game || e.target.closest("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!game || e.target.closest("input, select, textarea, dialog") || e.metaKey || e.ctrlKey || e.altKey) return;
     const current = viewPly ?? game.moves.length;
     if (e.key === "ArrowLeft") setView(Math.max(0, current - 1));
     else if (e.key === "ArrowRight") setView(Math.min(game.moves.length, current + 1));
     else if (e.key === "Home") setView(0);
     else if (e.key === "End") setView(game.moves.length);
     else if (e.key === "f" || e.key === "F") flip();
+    else if (e.key === "e" || e.key === "E") toggleEval();
     else return;
     e.preventDefault();
   };
@@ -415,6 +659,18 @@ function showGame(id) {
     flipped = !flipped;
     if (flipped) flippedGames.add(id);
     else flippedGames.delete(id);
+    render();
+  }
+
+  function toggleEval() {
+    evalOn = !evalOn;
+    saveSetting(EVAL_SETTING, evalOn ? "on" : "off");
+    view.classList.toggle("no-eval", !evalOn);
+    if (!evalOn) {
+      engine?.stop();
+      delete evalBar.dataset.fen; // analyse again when it's turned back on
+    }
+    fitBoard();
     render();
   }
 
@@ -477,13 +733,13 @@ function showGame(id) {
     const offer = game.status === "running" && game.pendingDrawOffer === color;
     setChildren(
       bar,
-      h("span", { class: `swatch ${color}` }),
       h(
         "div",
         { class: "who" },
         h(
           "div",
           { class: "who-line" },
+          h("span", { class: `swatch ${color}`, title: capitalize(color) }),
           h("span", { class: "name" }, spec.model),
           h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
           spendBadge(game.spend?.[color]),
@@ -498,6 +754,9 @@ function showGame(id) {
 
   function render() {
     title.textContent = `${game.white.model} vs ${game.black.model}`;
+    const state =
+      game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : game.status === "aborted" ? "Aborted" : game.result;
+    document.title = `${state} · ${game.white.model} vs ${game.black.model} · Botwinnik`;
     meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}${unfinishedNote(game)}`;
     meta.title = totalCost(game) === null ? UNKNOWN_PRICE : "";
 
@@ -509,8 +768,19 @@ function showGame(id) {
       }
     };
     const stoppable = game.status === "running" || game.status === "paused";
+    const over = game.status === "finished" || game.status === "aborted";
     setChildren(
       actions,
+      over
+        ? h(
+            "button",
+            {
+              title: "Start a game between the same models with the same time control",
+              onclick: () => openRematch({ white: game.white, black: game.black, timeControl: game.timeControl.label }),
+            },
+            "Rematch",
+          )
+        : null,
       game.status === "running"
         ? h("button", { disabled: true, title: "Available once the game is over or paused" }, "Download PGN")
         : h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
@@ -570,16 +840,22 @@ function showGame(id) {
     nav.replaceChildren(
       h("button", { onclick: () => setView(0), disabled: shownPly === 0, "aria-label": "Start", title: "Start (Home)" }, "⏮"),
       h("button", { onclick: () => setView(Math.max(0, shownPly - 1)), disabled: shownPly === 0, "aria-label": "Back", title: "Back (←)" }, "◀"),
-      h("span", { class: "muted" }, viewPly === null ? (game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : "Final position") : `After ${shownPly} of ${game.moves.length}`),
+      h("span", { class: "muted nav-label" }, viewPly === null ? (game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : "Final position") : `After ${shownPly} of ${game.moves.length}`),
       h("button", { onclick: () => setView(shownPly + 1), disabled: viewPly === null, "aria-label": "Forward", title: "Forward (→)" }, "▶"),
       h("button", { onclick: () => setView(game.moves.length), disabled: viewPly === null, "aria-label": "Latest", title: "Latest (End)" }, "⏭"),
-      h("button", { class: "flip", onclick: flip, "aria-pressed": String(flipped), "aria-label": "Flip the board", title: "Flip the board (F)" }, "⇅"),
+      h(
+        "span",
+        { class: "toggles" },
+        h("button", { class: "toggle", onclick: flip, "aria-pressed": String(flipped), "aria-label": "Flip the board", title: "Flip the board (F)" }, "⇅"),
+        h("button", { class: "toggle", onclick: toggleEval, "aria-pressed": String(evalOn), title: "Show or hide the eval bar (E)" }, "Eval"),
+      ),
     );
 
     renderMoves(shownPly);
   }
 
   function renderEval(fen) {
+    if (!evalOn) return;
     evalBar.classList.toggle("flipped", flipped);
     if (evalBar.dataset.fen !== fen) {
       evalBar.dataset.fen = fen;
@@ -747,6 +1023,10 @@ function renderBoard(el, fen, lastUci, flipped) {
   }
   el.replaceChildren(...squares);
 }
+
+// Sticky elements below the header need its height, which changes when the tagline wraps.
+const topbar = document.querySelector(".topbar");
+new ResizeObserver(() => document.documentElement.style.setProperty("--topbar-height", `${topbar.offsetHeight}px`)).observe(topbar);
 
 window.addEventListener("hashchange", route);
 route();
