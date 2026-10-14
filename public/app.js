@@ -127,7 +127,16 @@ function route() {
   cleanup();
   cleanup = () => {};
   const match = /^#\/game\/([\w-]+)/.exec(location.hash);
+  const tournament = /^#\/tournament\/([\w-]+)/.exec(location.hash);
+  const tournaments = tournament || location.hash === "#/tournaments";
+  for (const link of document.querySelectorAll(".topnav a")) {
+    const current = link.dataset.section === (tournaments ? "tournaments" : "games");
+    if (current) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
   if (match) showGame(match[1]);
+  else if (tournament) showTournament(tournament[1]);
+  else if (tournaments) showTournaments();
   else showHome();
 }
 
@@ -684,6 +693,458 @@ function openRematch(game) {
   dialog.showModal();
 }
 
+// ---------------------------------------------------------------- tournaments
+
+const TOURNAMENT_PLAYERS = { min: 3, max: 20 };
+
+/** "3", "2½", "½". */
+function formatPoints(points) {
+  const whole = Math.floor(points);
+  return points === whole ? String(whole) : `${whole || ""}½`;
+}
+
+/** "1 round", "3 games". */
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** "a", "a and b", "a, b and c". */
+function listing(items) {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/** USD for a set of game summaries; null when a model's price is unknown. */
+function sumCost(games) {
+  return games.some((g) => g.costUsd === null) ? null : games.reduce((sum, g) => sum + g.costUsd, 0);
+}
+
+async function showTournaments() {
+  document.title = "Tournaments · Botwinnik";
+  app.replaceChildren(h("p", { class: "muted" }, "Loading…"));
+  let setup;
+  try {
+    setup = await api("/setup");
+  } catch (err) {
+    app.replaceChildren(h("p", { class: "error" }, err.message));
+    return;
+  }
+  const listSection = h("section", { class: "card" }, h("h2", {}, "Tournaments"), h("p", { class: "muted" }, "Loading…"));
+  setChildren(
+    app,
+    setup.outdated
+      ? h("div", { class: "banner warn", role: "status" }, `Botwinnik was updated after this server started, so parts of this page may not work until you ${RESTART}`)
+      : null,
+    h("div", { class: "home wide-side" }, h("div", { class: "home-side" }, newTournamentForm(setup)), h("div", { class: "home-main" }, listSection)),
+  );
+  const refresh = async () => {
+    try {
+      listSection.replaceChildren(h("h2", {}, "Tournaments"), tournamentsTable(await api("/tournaments")));
+    } catch (err) {
+      listSection.replaceChildren(h("h2", {}, "Tournaments"), h("p", { class: "error" }, err.message));
+    }
+  };
+  await refresh();
+  const timer = setInterval(refresh, 5000);
+  cleanup = () => clearInterval(timer);
+}
+
+function newTournamentForm(setup) {
+  const error = h("p", { class: "error", role: "alert" });
+  const name = h("input", { id: "t-name", maxlength: 80, autocomplete: "off", placeholder: "Optional, e.g. October blitz" });
+  const time = h("input", { id: "t-time", value: "5+3", required: true, autocomplete: "off", spellcheck: "false" });
+  const presets = h(
+    "div",
+    { class: "chips" },
+    setup.timeControls.map((tc) => h("button", { type: "button", class: "chip", onclick: () => { time.value = tc; } }, tc)),
+  );
+  const unlisted = setup.providers.filter((p) => p.modelsError);
+  const note = unlisted.length
+    ? h(
+        "p",
+        { class: "muted models-error" },
+        `Couldn't fetch the model list for ${listing(unlisted.map((p) => p.label))}, so the suggestions come from config.ini. `,
+        unlisted.map((p) => p.modelsError).join(" "),
+      )
+    : null;
+
+  const list = h("ol", { class: "player-list" });
+  const rows = [];
+  let nextId = 0;
+  const summary = h("p", { class: "muted hint" });
+  const add = h("button", { type: "button", class: "small", onclick: () => addRow().focus() }, "Add player");
+  const update = () => {
+    rows.forEach((row, i) => row.number(i + 1, rows.length > TOURNAMENT_PLAYERS.min));
+    add.disabled = rows.length >= TOURNAMENT_PLAYERS.max;
+    const n = rows.length;
+    summary.textContent =
+      `${n} players: ${plural(n % 2 ? n : n - 1, "round")} of ${plural(Math.floor(n / 2), "game")}` +
+      `${n % 2 ? ", one player resting each round" : ""}, ${plural((n * (n - 1)) / 2, "game")} in all.`;
+  };
+  const addRow = () => {
+    const row = tournamentPlayerRow(setup, `t-player-${nextId++}`, nextChoice(setup, rows), () => {
+      rows.splice(rows.indexOf(row), 1);
+      row.el.remove();
+      update();
+    });
+    rows.push(row);
+    list.append(row.el);
+    update();
+    return row;
+  };
+  for (let i = 0; i < TOURNAMENT_PLAYERS.min; i++) addRow();
+
+  const submit = h("button", { type: "submit", class: "primary" }, "Start tournament");
+  return h(
+    "form",
+    {
+      class: "card new-game new-tournament",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        submit.disabled = true;
+        try {
+          const { tournament } = await api("/tournaments", {
+            method: "POST",
+            body: JSON.stringify({ name: name.value, timeControl: time.value, players: rows.map((r) => r.value()) }),
+          });
+          location.hash = `#/tournament/${tournament.id}`;
+        } catch (err) {
+          error.textContent = err.message;
+        } finally {
+          submit.disabled = false;
+        }
+      },
+    },
+    h("h2", {}, "New tournament"),
+    h("label", { for: "t-name" }, "Name"),
+    name,
+    h("label", { for: "t-time" }, "Time control ", h("span", { class: "muted" }, "(minutes + seconds per move)")),
+    time,
+    presets,
+    h("fieldset", {}, h("legend", {}, "Players"), list, note, add),
+    summary,
+    h(
+      "p",
+      { class: "muted hint" },
+      "A round-robin: every model plays every other once. The games of a round are played at the same time, pairing numbers are drawn at random, and colors alternate from round to round.",
+    ),
+    submit,
+    error,
+  );
+}
+
+/** The first model, taking one from each provider in turn, that no row has yet. */
+function nextChoice(setup, rows) {
+  const taken = new Set(rows.map((r) => `${r.value().provider}:${r.value().model}`));
+  const longest = Math.max(0, ...setup.providers.map((p) => p.models.length));
+  for (let i = 0; i < longest; i++) {
+    for (const provider of setup.providers) {
+      const model = provider.models[i];
+      if (model && !taken.has(`${provider.id}:${model.id}`)) return { provider: provider.id, model: model.id };
+    }
+  }
+  return { provider: setup.providers[0].id, model: "" };
+}
+
+function tournamentPlayerRow(setup, id, choice, onRemove) {
+  const number = h("span", { class: "muted player-number" });
+  // "Claude" for "Claude (Anthropic)": the row has little room.
+  const providerSelect = h("select", {}, setup.providers.map((p) => h("option", { value: p.id }, p.label.replace(/\s*\(.*\)$/, ""))));
+  const picker = modelPicker(`${id}-model`, "Model");
+  const fill = (model) => {
+    const provider = setup.providers.find((p) => p.id === providerSelect.value);
+    picker.setModels(provider.models);
+    picker.input.value = model ?? provider.models[0]?.id ?? "";
+  };
+  providerSelect.value = choice.provider;
+  providerSelect.addEventListener("change", () => fill());
+  fill(choice.model);
+  const remove = h("button", { type: "button", class: "remove", onclick: onRemove }, "×");
+  return {
+    el: h("li", { class: "player-row" }, number, providerSelect, picker.el, remove),
+    number(n, removable) {
+      number.textContent = n;
+      providerSelect.setAttribute("aria-label", `Player ${n} provider`);
+      picker.input.setAttribute("aria-label", `Player ${n} model`);
+      remove.setAttribute("aria-label", `Remove player ${n}`);
+      remove.title = removable ? "Remove this player" : `A tournament needs at least ${TOURNAMENT_PLAYERS.min} players`;
+      remove.disabled = !removable;
+    },
+    value: () => ({ provider: providerSelect.value, model: picker.input.value.trim() }),
+    focus: () => picker.input.focus(),
+  };
+}
+
+function tournamentsTable(tournaments) {
+  if (!tournaments.length) return h("p", { class: "muted" }, "No tournaments yet. Start one on the left.");
+  const open = (t) => (location.hash = `#/tournament/${t.id}`);
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      { class: "games tournaments" },
+      h("thead", {}, h("tr", {}, ["Tournament", "Time", "Progress", "Leader", "Cost"].map((t) => h("th", {}, t)))),
+      h(
+        "tbody",
+        {},
+        tournaments.map((t) =>
+          h(
+            "tr",
+            { onclick: () => open(t), tabindex: 0, onkeydown: (e) => e.key === "Enter" && e.target === e.currentTarget && open(t) },
+            h(
+              "td",
+              { class: "name-cell" },
+              h("div", {}, t.name),
+              h(
+                "div",
+                { class: "muted sub", title: `${formatDate(t.createdAt)}: ${t.players.map((p) => p.model).join(", ")}` },
+                `${formatShortDate(t.createdAt)} · ${plural(t.players.length, "player")}`,
+              ),
+            ),
+            h("td", { title: capitalize(t.category) }, t.timeControl),
+            h(
+              "td",
+              { title: `${t.gamesPlayed} of ${t.gamesTotal} games finished` },
+              t.status === "running"
+                ? h("span", { class: "badge live" }, t.round ? `Round ${t.round} of ${t.rounds}` : "Running")
+                : t.status === "finished"
+                  ? "Finished"
+                  : h("span", { class: "muted" }, "Aborted"),
+              t.status === "running" && t.gamesPaused ? [" ", h("span", { class: "badge warn", title: "A game is waiting to be resumed" }, "Paused")] : null,
+            ),
+            h(
+              "td",
+              { class: "leader-cell" },
+              t.leaders.length
+                ? [listing(t.leaders.map((l) => l.model)), h("span", { class: "muted" }, ` ${formatPoints(t.leaders[0].points)}`)]
+                : h("span", { class: "muted" }, "—"),
+            ),
+            h("td", { class: "cost", title: t.costUsd === null ? UNKNOWN_PRICE : "" }, formatUsd(t.costUsd)),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function showTournament(id) {
+  document.title = "Tournament · Botwinnik";
+  app.replaceChildren(h("p", { class: "muted" }, "Loading…"));
+  const title = h("h2", {});
+  const meta = h("p", { class: "muted" });
+  const actions = h("div", { class: "actions" });
+  const banner = h("div", { class: "banner" });
+  const standingsCard = h("section", { class: "card" });
+  const roundsCard = h("section", { class: "card" });
+  const page = h("div", { class: "tournament" }, h("div", { class: "game-head" }, h("div", {}, title, meta), actions), banner, standingsCard, roundsCard);
+  let shown = false;
+
+  const refresh = async () => {
+    let data;
+    try {
+      data = await api(`/tournaments/${id}`);
+    } catch (err) {
+      if (!shown) app.replaceChildren(h("p", { class: "error" }, err.message));
+      return;
+    }
+    if (!shown) {
+      app.replaceChildren(page);
+      shown = true;
+    }
+    render(data);
+  };
+  refresh();
+  const timer = setInterval(refresh, 5000);
+  cleanup = () => clearInterval(timer);
+
+  function render({ tournament: t, round, standings, games }) {
+    title.textContent = t.name;
+    document.title = `${t.name} · Botwinnik`;
+    const cost = sumCost(Object.values(games));
+    meta.textContent =
+      `${t.timeControl.label} ${t.timeControl.category} · ${plural(t.players.length, "player")}, round robin · ${formatDate(t.createdAt)} · ` +
+      `${t.status === "running" ? "cost so far" : "cost"} ${formatUsd(cost)}`;
+    meta.title = cost === null ? UNKNOWN_PRICE : "";
+
+    setChildren(
+      actions,
+      t.status === "running"
+        ? h(
+            "button",
+            {
+              class: "danger",
+              onclick: async () => {
+                if (!confirm("Abort this tournament? Its games in progress are aborted, and no more rounds are played. Finished games still count for the ratings.")) return;
+                try {
+                  await api(`/tournaments/${t.id}/abort`, { method: "POST", body: "{}" });
+                } catch (err) {
+                  alert(err.message);
+                }
+                refresh();
+              },
+            },
+            "Abort tournament",
+          )
+        : null,
+    );
+
+    const paused = Object.values(games).some((g) => g.status === "paused");
+    banner.className = `banner ${t.status === "running" ? (paused ? "warn" : "live") : t.status}`;
+    banner.textContent = tournamentState(t, round, standings, games);
+
+    setChildren(
+      standingsCard,
+      h("h2", {}, "Standings"),
+      standingsTable(standings, t.timeControl.category),
+      h(
+        "p",
+        { class: "muted note" },
+        `A win scores 1 and a draw ½; aborted games count for nobody. Ties are broken by Sonneborn-Berger (SB: the points of the models a model beat, plus half the points of those it drew with), then by wins. ` +
+          `Rating is the model's ${t.timeControl.category} rating now, with what this tournament's games did to it.`,
+      ),
+    );
+    setChildren(roundsCard, h("h2", {}, "Rounds"), h("div", { class: "rounds" }, t.rounds.map((r, i) => roundBlock(t, r, i + 1, round, games))));
+  }
+}
+
+/** What the tournament is doing, in a sentence or three. */
+function tournamentState(t, round, standings, games) {
+  if (t.status === "finished") {
+    const winners = standings.filter((s) => s.rank === 1 && s.played > 0);
+    if (!winners.length) return "Finished, without a single finished game.";
+    const points = `${formatPoints(winners[0].points)} point${winners[0].points === 1 ? "" : "s"}`;
+    return winners.length === 1
+      ? `Finished. ${winners[0].model} wins with ${points}.`
+      : `Finished. ${listing(winners.map((w) => w.model))} share first place with ${points}.`;
+  }
+  if (t.status === "aborted") return `${t.message ?? "Aborted."} Finished games still count for the ratings.`;
+  const current = t.rounds[round - 1];
+  if (!current) return "Moving on to the next round…";
+  const paused = current.games.filter((p) => games[p.gameId]?.status === "paused").length;
+  return [
+    `Round ${round} of ${t.rounds.length} is being played.`,
+    current.bye !== null ? `${t.players[current.bye].model} rests this round.` : "",
+    paused ? `${paused === 1 ? "A game is" : `${paused} games are`} paused: resume ${paused === 1 ? "it" : "them"} from the game page to play on.` : "",
+    round < t.rounds.length ? "The next round starts when every game of this one is over." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function standingsTable(standings, category) {
+  const num = (value) => h("td", { class: "num" }, value);
+  // No places until a game has finished.
+  const ranked = standings.some((s) => s.played > 0);
+  const sb = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      { class: "ratings standings" },
+      h(
+        "thead",
+        {},
+        h(
+          "tr",
+          {},
+          h("th", { class: "num" }, "#"),
+          h("th", {}, "Model"),
+          ["Points", "Played", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
+          h("th", { class: "num" }, h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB")),
+          h("th", { class: "num" }, "Rating"),
+        ),
+      ),
+      h(
+        "tbody",
+        {},
+        standings.map((s) =>
+          h(
+            "tr",
+            {},
+            num(ranked ? s.rank : ""),
+            h("td", {}, s.model),
+            h("td", { class: "num rating-cell" }, formatPoints(s.points)),
+            num(s.played),
+            num(s.wins),
+            num(s.draws),
+            num(s.losses),
+            num(sb(s.tiebreak)),
+            h(
+              "td",
+              { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
+              s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function ratingChange(delta) {
+  return h("span", { class: `rating-change${delta > 0 ? " up" : delta < 0 ? " down" : ""}` }, delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : "±0");
+}
+
+function roundBlock(t, r, number, current, games) {
+  const live = t.status === "running" && number === current;
+  const ahead = r.games.every((p) => !p.gameId);
+  const state = live
+    ? h("span", { class: "badge live" }, "In progress")
+    : ahead
+      ? h("span", { class: "muted" }, t.status === "running" ? "Upcoming" : "Not played")
+      : null;
+  const open = (game) => (location.hash = `#/game/${game.id}`);
+  return h(
+    "section",
+    { class: `round${live ? " current" : ""}${ahead ? " ahead" : ""}` },
+    h(
+      "div",
+      { class: "round-head" },
+      h("h3", {}, `Round ${number}`),
+      state,
+      r.bye !== null ? h("span", { class: "muted rests" }, `${t.players[r.bye].model} rests`) : null,
+    ),
+    h(
+      "div",
+      { class: "table-wrap" },
+      h(
+        "table",
+        { class: "games round-games" },
+        h("thead", {}, h("tr", {}, ["White", "Black", "Result", "Moves", "Cost"].map((c) => h("th", {}, c)))),
+        h(
+          "tbody",
+          {},
+          r.games.map((p) => {
+            const game = p.gameId ? games[p.gameId] : null;
+            return h(
+              "tr",
+              game
+                ? { onclick: () => open(game), tabindex: 0, onkeydown: (e) => e.key === "Enter" && e.target === e.currentTarget && open(game) }
+                : { class: "unplayed" },
+              h("td", {}, t.players[p.white].model),
+              h("td", {}, t.players[p.black].model),
+              h("td", { title: game?.termination ?? "" }, gameState(game)),
+              h("td", {}, game ? Math.ceil(game.moves / 2) : ""),
+              h("td", { class: "cost", title: game?.costUsd === null ? UNKNOWN_PRICE : "" }, game ? formatUsd(game.costUsd) : ""),
+            );
+          }),
+        ),
+      ),
+    ),
+  );
+}
+
+/** A game summary's result, or where it stands. */
+function gameState(game) {
+  if (!game) return h("span", { class: "muted" }, "—");
+  if (game.status === "running") return h("span", { class: "badge live" }, "Live");
+  if (game.status === "paused") return h("span", { class: "badge warn" }, "Paused");
+  if (game.status === "aborted") return h("span", { class: "muted" }, "aborted");
+  return h("span", { class: "result" }, game.result);
+}
+
 // ---------------------------------------------------------------- game view
 
 /** Wide enough to put the board and the moves side by side, filling the window. */
@@ -907,7 +1368,14 @@ function showGame(id) {
     const state =
       game.status === "running" ? "Live" : game.status === "paused" ? "Paused" : game.status === "aborted" ? "Aborted" : game.result;
     document.title = `${state} · ${game.white.model} vs ${game.black.model} · Botwinnik`;
-    meta.textContent = `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"} · game cost ${formatUsd(totalCost(game))}${unfinishedNote(game)}`;
+    setChildren(
+      meta,
+      `${game.timeControl.label} ${game.timeControl.category} · ${formatDate(game.createdAt)} · `,
+      game.tournament
+        ? [`round ${game.tournament.round} of `, h("a", { href: `#/tournament/${game.tournament.id}` }, game.tournament.name)]
+        : `colors ${game.colorsAssigned === "random" ? "drawn at random" : "chosen by the admin"}`,
+      ` · game cost ${formatUsd(totalCost(game))}${unfinishedNote(game)}`,
+    );
     meta.title = totalCost(game) === null ? UNKNOWN_PRICE : "";
 
     const post = async (action) => {
@@ -953,7 +1421,8 @@ function showGame(id) {
             {
               class: "danger",
               onclick: async () => {
-                if (!confirm("Abort this game? It will be saved without a result.")) return;
+                const going = game.tournament ? ", and the tournament goes on without it" : "";
+                if (!confirm(`Abort this game? It will be saved without a result${going}.`)) return;
                 await post("abort");
                 if (game.status === "paused") route();
               },

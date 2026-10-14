@@ -125,8 +125,14 @@ h3 {
   align-items: start;
 }
 
+/* The tournament form lines up a provider, a model and a button per player. */
+.home.wide-side {
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+}
+
 @media (max-width: 820px) {
-  .home {
+  .home,
+  .home.wide-side {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1036,6 +1042,157 @@ table.games tbody tr:hover {
 td.cost {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- navigation */
+
+.topnav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.topnav a {
+  padding: 3px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.topnav a:hover {
+  color: var(--text);
+}
+
+.topnav a[aria-current="page"] {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.topnav a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------- tournaments */
+
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+/* Number, provider, model and remove button on one line, even beside the tables. */
+.player-row {
+  display: grid;
+  grid-template-columns: 1.2em auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-row select {
+  min-width: 0;
+  padding-left: 6px;
+  padding-right: 4px;
+}
+
+.player-number {
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-row .remove {
+  padding: 5px 9px;
+  line-height: 1.2;
+}
+
+.new-tournament .models-error {
+  margin: 0 0 8px;
+}
+
+.new-tournament .hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+table.games td.name-cell,
+table.games td.leader-cell {
+  min-width: 120px;
+  white-space: normal;
+}
+
+table.games td .sub {
+  font-size: 13px;
+}
+
+.tournament {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tournament .banner {
+  margin: 0;
+}
+
+.tournament .game-head h2 {
+  margin-bottom: 4px;
+}
+
+table.standings .rating-change {
+  display: inline-block;
+  min-width: 3.2em;
+  font-size: 13px;
+}
+
+.rounds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  gap: 14px;
+}
+
+.round {
+  min-width: 0;
+  padding: 10px 12px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.round.current {
+  border-color: var(--accent);
+}
+
+.round-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.round-head h3 {
+  margin: 0;
+}
+
+.round-head .rests {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+table.round-games tr:last-child td {
+  border-bottom: none;
+}
+
+table.games tbody tr.unplayed {
+  color: var(--muted);
+  cursor: default;
+}
+
+table.games tbody tr.unplayed:hover {
+  background: none;
 }
 
 /*

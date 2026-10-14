@@ -21,6 +21,7 @@ import {
   type PlayerReply,
   type PlayerSpec,
   type Termination,
+  type TournamentGame,
   type TurnInfo,
 } from "./types.js";
 
@@ -31,6 +32,7 @@ export interface NewGame {
   black: PlayerSpec;
   colorsAssigned: "manual" | "random";
   startFen?: string;
+  tournament?: TournamentGame;
 }
 
 export interface GameOptions {
@@ -75,6 +77,7 @@ export function createGameRecord(setup: NewGame): GameRecord {
     lastDrawOfferBy: null,
     result: "*",
     termination: null,
+    ...(setup.tournament ? { tournament: setup.tournament } : {}),
   };
 }
 

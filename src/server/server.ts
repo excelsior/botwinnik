@@ -8,8 +8,9 @@ import { toPgn } from "../game/pgn.js";
 import { PgnImportError } from "../game/pgnImport.js";
 import { K_FACTOR, START_RATING, type GameRatings } from "../game/ratings.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
-import type { GameRecord } from "../game/types.js";
+import type { GameRecord, PlayerSpec } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
+import { TournamentService, type CreateTournamentRequest } from "../tournament/service.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
 const SRC_DIR = fileURLToPath(new URL("../", import.meta.url));
@@ -41,6 +42,8 @@ export interface ServerOptions {
   providers: Pick<AppConfig, "providers">["providers"];
   /** Reject requests whose Host header isn't a loopback name (DNS-rebinding guard). */
   loopbackOnly: boolean;
+  /** Runs the tournaments; defaults to one keeping them next to the games. */
+  tournaments?: TournamentService;
   /** Fetches the models a provider's key can use; without it the form suggests config.ini's lists. */
   listModels?: (provider: Provider) => Promise<ModelOption[]>;
   /**
@@ -105,8 +108,9 @@ export function createServer(service: GameService, options: ServerOptions): Serv
     const startedWith = newestSourceChange();
     options = { ...options, codeChanged: () => newestSourceChange() > startedWith };
   }
+  const tournaments = options.tournaments ?? new TournamentService(service);
   return createHttpServer((req, res) => {
-    handle(service, options, catalog, req, res).catch((err) => {
+    handle(service, tournaments, options, catalog, req, res).catch((err) => {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) console.error(err);
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
@@ -117,6 +121,7 @@ export function createServer(service: GameService, options: ServerOptions): Serv
 
 async function handle(
   service: GameService,
+  tournaments: TournamentService,
   options: ServerOptions,
   catalog: ModelCatalog | undefined,
   req: IncomingMessage,
@@ -164,6 +169,8 @@ async function handle(
   if (parts[1] === "ratings" && parts.length === 2 && method === "GET") {
     return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories: service.ratings().tables() });
   }
+
+  if (parts[1] === "tournaments") return handleTournaments(tournaments, options, req, res, parts);
 
   if (parts[1] !== "games") throw new HttpError(404, "Not found");
 
@@ -255,20 +262,65 @@ async function handle(
   throw new HttpError(404, "Not found");
 }
 
+// /api/tournaments...
+async function handleTournaments(
+  tournaments: TournamentService,
+  options: ServerOptions,
+  req: IncomingMessage,
+  res: ServerResponse,
+  parts: string[],
+) {
+  const method = req.method ?? "GET";
+  if (parts.length === 2) {
+    if (method === "GET") return sendJson(res, 200, tournaments.list());
+    if (method === "POST") {
+      const request = parseTournamentRequest(await readJson(req), options);
+      try {
+        return sendJson(res, 201, { tournament: tournaments.create(request) });
+      } catch (err) {
+        throw new HttpError(400, err instanceof Error ? err.message : String(err));
+      }
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+  const id = parts[2];
+  const view = tournaments.view(id);
+  if (!view) throw new HttpError(404, `No tournament ${id}`);
+  if (parts.length === 3 && method === "GET") return sendJson(res, 200, view);
+  if (parts.length === 4 && parts[3] === "abort" && method === "POST") {
+    if (!tournaments.abort(id)) throw new HttpError(409, "The tournament is not running.");
+    return sendJson(res, 200, tournaments.view(id));
+  }
+  throw new HttpError(404, "Not found");
+}
+
+function parseTournamentRequest(body: unknown, options: ServerOptions): CreateTournamentRequest {
+  if (typeof body !== "object" || body === null) throw new HttpError(400, "Expected a JSON object.");
+  const b = body as Record<string, unknown>;
+  if (typeof b.timeControl !== "string") throw new HttpError(400, "timeControl is required, e.g. \"5+3\".");
+  if (b.name !== undefined && typeof b.name !== "string") throw new HttpError(400, "name must be text.");
+  const name = (b.name ?? "").replace(/\s+/g, " ").trim();
+  if (name.length > 80) throw new HttpError(400, "Keep the name to 80 characters.");
+  if (!Array.isArray(b.players)) throw new HttpError(400, "players must list the players.");
+  return { name: name || undefined, timeControl: b.timeControl, players: b.players.map((p, i) => parsePlayer(p, i, options)) };
+}
+
+function parsePlayer(value: unknown, index: number, options: ServerOptions): PlayerSpec {
+  const spec = (value ?? {}) as Record<string, unknown>;
+  const provider = spec.provider as Provider;
+  const model = typeof spec.model === "string" ? spec.model.trim() : "";
+  if (!PROVIDERS.includes(provider)) throw new HttpError(400, `Player ${index + 1}: unknown provider.`);
+  if (!options.providers[provider]) throw new HttpError(400, `Player ${index + 1}: config.ini has no API key for ${provider}.`);
+  if (!model) throw new HttpError(400, `Player ${index + 1}: pick a model.`);
+  return { provider, model };
+}
+
 function parseStartRequest(body: unknown, options: ServerOptions): StartGameRequest {
   if (typeof body !== "object" || body === null) throw new HttpError(400, "Expected a JSON object.");
   const b = body as Record<string, unknown>;
   if (typeof b.timeControl !== "string") throw new HttpError(400, "timeControl is required, e.g. \"5+3\".");
   if (!Array.isArray(b.players) || b.players.length !== 2) throw new HttpError(400, "players must list two players.");
-  const players = b.players.map((p, i) => {
-    const spec = (p ?? {}) as Record<string, unknown>;
-    const provider = spec.provider as Provider;
-    const model = typeof spec.model === "string" ? spec.model.trim() : "";
-    if (!PROVIDERS.includes(provider)) throw new HttpError(400, `Player ${i + 1}: unknown provider.`);
-    if (!options.providers[provider]) throw new HttpError(400, `Player ${i + 1}: config.ini has no API key for ${provider}.`);
-    if (!model) throw new HttpError(400, `Player ${i + 1}: pick a model.`);
-    return { provider, model };
-  }) as [StartGameRequest["players"][0], StartGameRequest["players"][1]];
+  const players = b.players.map((p, i) => parsePlayer(p, i, options)) as StartGameRequest["players"];
   const color = b.firstPlayerColor ?? "random";
   if (color !== "white" && color !== "black" && color !== "random") {
     throw new HttpError(400, 'firstPlayerColor must be "white", "black" or "random".');

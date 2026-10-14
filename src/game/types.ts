@@ -128,6 +128,16 @@ export interface GameRecord {
   lastDrawOfferBy: Color | null;
   result: GameResult;
   termination: Termination | null;
+  /** Set for a game played in a tournament. */
+  tournament?: TournamentGame;
+}
+
+/** The tournament a game belongs to. */
+export interface TournamentGame {
+  id: string;
+  name: string;
+  /** 1-based. */
+  round: number;
 }
 
 /** What a player decided to do on its turn. */

@@ -6,7 +6,8 @@ model for its moves, runs the clocks, enforces the rules, saves the game with
 the reasoning the models give for their moves, and exports it as PGN. Games
 can be imported from PGN too, and a game exported while paused can be resumed
 after importing it. Each model has an Elo rating for bullet, blitz, rapid and
-classical that moves with every finished game.
+classical that moves with every finished game. Models can also meet in
+round-robin tournaments, whose games count for the ratings like any other.
 
 ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
 (xAI API) are supported.
@@ -215,6 +216,35 @@ Ratings are worked out again from the saved games whenever they're needed,
 so they stay right when games are imported or game files are deleted. An
 imported game that is already over counts as of when it was imported.
 
+## Tournaments
+
+The **Tournaments** tab of the page runs round-robins. The admin names the
+tournament (optional), picks a time control and adds at least three different
+models (at most 20), and every model plays every other once. With an odd
+number of models one of them rests each round, a different one each time. The
+pairing numbers are drawn at random and the schedule follows FIDE's Berger
+tables, so colors alternate from round to round: each model gets as many
+Whites as Blacks, or one more of either when the number of models is even.
+
+All the games of a round are played at the same time, and the next round
+starts once every one of them is over. A paused game holds its round until it
+is resumed (or aborted). An aborted game scores for nobody and the tournament
+goes on without it. **Abort tournament** aborts the games in progress and
+plays no more rounds.
+
+Each tournament's page shows the standings (1 point for a win, ½ for a draw,
+ties broken by Sonneborn-Berger and then by wins), each model's rating in the
+tournament's time category with what the tournament's games did to it, and
+every round's games, ongoing or finished, each linking to its game page. The
+games are ordinary games otherwise: they are listed with the others, count for
+the ratings, and their PGN carries the tournament's name and round in the
+`Event` and `Round` tags.
+
+If the app stops while a tournament runs, the tournament carries on when it
+starts again. The games the stop cut off come back paused (see above) and hold
+their round until they are resumed. Tournaments are saved as
+`games/tournaments/<id>.json`.
+
 ## Saved games and PGN
 
 Every game is saved as `games/<id>.json` after each change, including the
@@ -252,6 +282,9 @@ npm run typecheck
 the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini
 and xAI clients;
 `src/server` the admin API; `public/` the web page.
+
+`src/tournament` holds the round-robin schedule, the standings and the
+tournament service, which runs tournaments on top of the game service.
 
 ### Dev container
 

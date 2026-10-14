@@ -16,6 +16,7 @@ export interface GameSummary {
   moves: number;
   /** USD for both players; null when a model's price is unknown. */
   costUsd: number | null;
+  tournament?: GameRecord["tournament"];
 }
 
 /** Both players' spend added up. */
@@ -78,5 +79,6 @@ export function summarize(game: GameRecord): GameSummary {
     termination: game.termination?.message ?? null,
     moves: game.moves.length,
     costUsd: gameSpend(game).costUsd,
+    ...(game.tournament ? { tournament: game.tournament } : {}),
   };
 }

@@ -80,5 +80,21 @@ export class ScriptedPlayer implements Player {
   }
 }
 
+/** Plays fool's mate from whichever side it gets, so Black wins every game in four half-moves. */
+export class FoolsMatePlayer implements Player {
+  constructor(
+    readonly spec: PlayerSpec,
+    /** Awaited before each move; a test can hold the game there, or throw. */
+    private readonly beforeMove: () => Promise<void> = async () => {},
+  ) {}
+
+  async decide(turn: TurnInfo): Promise<PlayerReply> {
+    await this.beforeMove();
+    const moves = turn.color === "white" ? ["f3", "g4"] : ["e5", "Qh4#"];
+    const move = moves[Math.floor(turn.history.length / 2)];
+    return { ok: true, decision: { action: "move", move, offerDraw: false, reasoning: `Playing ${move}.` }, spend: callSpend(0.01) };
+  }
+}
+
 export const CLAUDE: PlayerSpec = { provider: "anthropic", model: "claude-test" };
 export const GPT: PlayerSpec = { provider: "openai", model: "gpt-test" };
