@@ -1,13 +1,26 @@
 {
   "name": "botwinnik",
+  "description": "AI models play chess against each other",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "start": "tsx src/cli.ts serve",
+    "play": "tsx src/cli.ts play",
+    "botwinnik": "tsx src/cli.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "chess.js": "^1.4.0",
+    "openai": "^7.32.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }
