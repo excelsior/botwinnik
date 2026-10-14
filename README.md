@@ -38,6 +38,16 @@ api_key = sk-ant-...
 models = claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-fable-5-1
 effort =
 
+[google]
+api_key = AIza...
+models = gemini-3.8-flash, gemini-3.1-pro-preview, gemini-2.5-pro, gemini-2.5-flash-lite
+effort =                                           ; thinking level, Gemini 3 and later
+
+[xai]
+api_key = xai-...
+models = grok-4.7, grok-4.6, grok-4.3
+effort =
+
 [app]
 host = 127.0.0.1
 port = 3000
@@ -123,7 +133,8 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
   model) abort the game without a result.
 - **Out of funds:** if a call fails because the API account has run out of
   money (OpenAI's exhausted quota, Anthropic's billing error or low credit
-  balance), the game pauses with both clocks stopped. Add funds, then press
+  balance, Gemini's depleted prepaid credits, spending cap or used-up daily
+  quota, an xAI team with no credits or at its spending limit), the game pauses with both clocks stopped. Add funds, then press
   **Resume** on the game's page or run `botwinnik resume <game-id>`, and the
   game continues where it stopped, with the same player to move. Time spent
   paused doesn't count, and a paused game stays paused if the app is
@@ -136,7 +147,7 @@ move.
 
 ## Costs
 
-Both APIs report the tokens each call uses (thinking/reasoning tokens count as
+Every API reports the tokens each call uses (thinking/reasoning tokens count as
 output). Botwinnik multiplies them by the model's price and records the cost:
 
 - **per move:** every call in that turn, including rejected attempts such as
@@ -155,10 +166,15 @@ page says it's waiting for that call, and `play` waits for it before exiting
 (Ctrl+C skips the wait). A request still running when the app stops is lost
 and isn't counted.
 
-Prices (USD per million tokens) are built in for current Claude models and
-the GPT-5.6 models, as of October 2026. The GPT-5.6 prices come from
-third-party listings rather than OpenAI's own page, so check them. Set or
-override any model's price in `config.ini`:
+Prices (USD per million tokens) are built in for the current Claude,
+GPT-5.6, Gemini and Grok models, as of October 2026. The GPT-5.6 prices come
+from third-party listings rather than OpenAI's own page, and a few Gemini
+ones (2.5 Flash, 3.1 Flash-Lite, 3.5 Flash-Lite, 3.6 Flash) from LiteLLM's
+price list, so check them. Gemini 3.8 Flash is at its introductory price,
+which doubles on January 1, 2027; the built-in price switches on that date.
+Gemini and Grok charge more for prompts over 200k tokens, which a player's
+prompt never comes close to. Set or override any model's price in
+`config.ini`:
 
 ```ini
 [prices]

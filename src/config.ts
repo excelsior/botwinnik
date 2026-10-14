@@ -33,8 +33,8 @@ export interface AppConfig {
 export const DEFAULT_MODELS: Record<Provider, string[]> = {
   openai: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
   anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
-  google: [],
-  xai: [],
+  google: ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
+  xai: ["grok-4.7", "grok-4.6", "grok-4.3"],
 };
 
 export type IniData = Record<string, Record<string, string>>;

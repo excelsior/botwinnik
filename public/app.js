@@ -193,7 +193,7 @@ function newGameForm(setup) {
     const providerSelect = h(
       "select",
       { id: `p${n}-provider`, "aria-label": `Player ${n} provider` },
-      setup.providers.map((p) => h("option", { value: p.id }, p.label)),
+      setup.providers.map((p) => h("option", { value: p.id }, PROVIDER_NAMES[p.id] ?? p.label)),
     );
     const picker = modelPicker(`p${n}-model`, `Player ${n} model`);
     const model = picker.input;
@@ -206,7 +206,7 @@ function newGameForm(setup) {
         ? `Couldn't fetch the model list, so the suggestions come from config.ini. ${provider.modelsError}`
         : "";
     };
-    // With both keys configured, default to one model from each provider.
+    // With more than one key configured, default to models from two providers.
     if (setup.providers.length > 1) providerSelect.value = setup.providers[defaultIndex % setup.providers.length].id;
     providerSelect.addEventListener("change", () => fill(0));
     fill(setup.providers.length > 1 ? 0 : defaultIndex);

@@ -11,14 +11,18 @@ export const XAI_BASE_URL = "https://api.x.ai/v1";
 export interface XaiModelOptions {
   model: string;
   apiKey: string;
-  /** reasoning_effort for the models that take it (low | high); omitted means the model's default. */
+  /** reasoning_effort (low | medium | high...; which ones depends on the model); omitted means the model's default. */
   effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
   baseURL?: string;
 }
 
-/** Grok via xAI's OpenAI-compatible Chat Completions API, with a strict JSON schema for the reply. */
+/**
+ * Grok via xAI's OpenAI-compatible Chat Completions API, with a strict JSON
+ * schema for the reply. xAI calls this API legacy in favor of its Responses
+ * API, but it still serves every model and is the well-trodden path.
+ */
 export class XaiModel implements ModelClient {
   private readonly client: OpenAI;
 
@@ -62,8 +66,9 @@ export class XaiModel implements ModelClient {
 }
 
 /**
- * xAI reports reasoning tokens separately from completion_tokens and bills
- * them as output, so they are added here.
+ * xAI counts reasoning tokens apart from completion_tokens (its examples add
+ * up prompt + completion + reasoning to the total) and bills them as output,
+ * so they are added here.
  */
 function usageOf(usage: CompletionUsage | undefined): Usage | undefined {
   if (!usage) return undefined;
@@ -86,7 +91,7 @@ export function classifyXaiError(err: unknown): unknown {
         ? body
         : (body?.message ?? (typeof body?.error === "string" ? body.error : body?.error?.message) ?? err.message);
     const detail = `xAI API error ${status}: ${message}`;
-    // A team without credits, or one that hit its spending limit.
+    // A team without credits (a 403 saying so), or one that hit its spending limit.
     if (status === 402 || /credits|spending limit|billing/i.test(message)) return new OutOfFundsError(detail);
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
     return new FatalPlayerError(detail);

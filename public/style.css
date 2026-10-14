@@ -315,6 +315,11 @@ legend {
   min-width: 0;
 }
 
+/* The provider select keeps its short name whole; the model gets the rest. */
+.row > select {
+  flex: 0 0 auto;
+}
+
 input,
 select,
 textarea,

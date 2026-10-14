@@ -8,7 +8,7 @@ export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta
 export interface GeminiModelOptions {
   model: string;
   apiKey: string;
-  /** thinkingLevel (low | high...); omitted means the model's default. */
+  /** thinkingLevel (minimal | low | medium | high) for Gemini 3 and later; omitted means the model's default. */
   effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
@@ -46,14 +46,12 @@ export class GeminiModel implements ModelClient {
 
   async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
     const { model, effort } = this.options;
+    // Gemini 2.5 rejects thinkingLevel (it takes a token budget instead), so it keeps its default there.
+    const thinking = effort && !/^gemini-2\./.test(geminiModelId(model)) ? { thinkingConfig: { thinkingLevel: effort.toUpperCase() } } : {};
     const body = {
       systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: user }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseJsonSchema: DECISION_SCHEMA,
-        ...(effort ? { thinkingConfig: { thinkingLevel: effort } } : {}),
-      },
+      generationConfig: { responseMimeType: "application/json", responseJsonSchema: DECISION_SCHEMA, ...thinking },
     };
     const data = (await geminiRequest(this.options, `models/${geminiModelId(model)}:generateContent`, {
       method: "POST",
@@ -62,7 +60,7 @@ export class GeminiModel implements ModelClient {
     })) as GeminiResponse;
 
     const meta = data.usageMetadata;
-    // Thinking is billed as output but counted apart from the reply.
+    // promptTokenCount includes cached tokens; thinking is billed as output but counted apart from the reply.
     const usage: Usage | undefined = meta
       ? {
           inputTokens: meta.promptTokenCount ?? 0,
@@ -116,8 +114,14 @@ export function classifyGeminiError(status: number, body: GeminiErrorBody | unde
   const detail = `Gemini API error ${status}: ${error?.message ?? error?.status ?? "no details"}`;
   const quotaIds = (error?.details ?? []).flatMap((d) => (d.violations ?? []).map((v) => v.quotaId ?? ""));
   const reasons = (error?.details ?? []).map((d) => d.reason ?? "");
-  // A daily quota or a project without billing won't come back by retrying; a per-minute limit will.
-  if (quotaIds.some((id) => /PerDay/i.test(id)) || reasons.some((r) => /BILLING/i.test(r)) || /billing|prepay|credit/i.test(error?.message ?? "")) {
+  // Depleted prepaid credits (402), a monthly spending cap, a used-up daily
+  // quota or missing billing won't come back by retrying; a per-minute limit will.
+  if (
+    status === 402 ||
+    quotaIds.some((id) => /PerDay/i.test(id)) ||
+    reasons.some((r) => /BILLING/i.test(r)) ||
+    /billing|prepay|credits|spending cap/i.test(error?.message ?? "")
+  ) {
     return new OutOfFundsError(detail);
   }
   if (status === 408 || status === 429 || status >= 500) return new TransientPlayerError(detail);

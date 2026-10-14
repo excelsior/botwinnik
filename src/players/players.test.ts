@@ -4,8 +4,10 @@ import { Chess } from "chess.js";
 import { FatalPlayerError, OutOfFundsError, TransientPlayerError, type TurnInfo } from "../game/types.js";
 import { illegalMoveBonusMs, parseTimeControl, timeCategory } from "../timeControl.js";
 import { AnthropicModel } from "./anthropic.js";
+import { GeminiModel } from "./gemini.js";
 import { LlmPlayer } from "./llmPlayer.js";
 import { OpenAIModel } from "./openai.js";
+import { XaiModel } from "./xai.js";
 
 const DECISION = { reasoning: "Fighting for the center.", action: "move", move: "e5", offer_draw: false };
 
@@ -32,9 +34,9 @@ function turn(): TurnInfo {
 
 /** A fetch stand-in that records requests and answers from a queue. */
 function fakeFetch(responses: (() => Response)[]) {
-  const requests: { url: string; body: any }[] = [];
+  const requests: { url: string; body: any; headers: Headers }[] = [];
   const fn = (async (input: string | URL | Request, init?: RequestInit) => {
-    requests.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    requests.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined, headers: new Headers(init?.headers) });
     const next = responses.shift();
     if (!next) throw new Error("no fake response left");
     return next();
@@ -233,5 +235,201 @@ describe("ChatGPT player", () => {
       assert.equal(err.message, "OpenAI API error 404: The model does not exist");
       return true;
     });
+  });
+});
+
+function geminiResponse(body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+const GEMINI_USAGE = { promptTokenCount: 1200, cachedContentTokenCount: 1000, candidatesTokenCount: 80, thoughtsTokenCount: 500, totalTokenCount: 1780 };
+
+describe("Gemini player", () => {
+  it("asks generateContent for JSON matching the schema and counts thinking as output", async () => {
+    const fake = fakeFetch([
+      () =>
+        geminiResponse({
+          candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(DECISION) }] }, finishReason: "STOP" }],
+          usageMetadata: GEMINI_USAGE,
+        }),
+    ]);
+    const model = new GeminiModel({ model: "gemini-3.8-flash", apiKey: "AIza-test", effort: "low", fetch: fake.fn });
+    const player = new LlmPlayer({ provider: "google", model: "gemini-3.8-flash" }, model, { input: 0.75, output: 3.75, cachedInput: 0.075 });
+    const reply = await player.decide(turn());
+    assert.deepEqual(reply, {
+      ok: true,
+      decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
+      // 200 fresh input tokens, 1000 cached, and 80 reply + 500 thinking tokens of output.
+      spend: { calls: 1, inputTokens: 1200, cachedInputTokens: 1000, outputTokens: 580, costUsd: (200 * 0.75 + 1000 * 0.075 + 580 * 3.75) / 1e6 },
+    });
+    const { url, body, headers } = fake.requests[0];
+    assert.equal(url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+    assert.equal(headers.get("x-goog-api-key"), "AIza-test");
+    assert.equal(body.generationConfig.responseMimeType, "application/json");
+    assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["reasoning", "action", "move", "offer_draw"]);
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: "LOW" });
+    assert.match(body.systemInstruction.parts[0].text, /playing a game of chess as Black/);
+    assert.match(body.contents[0].parts[0].text, /Moves so far: 1\. e4/);
+  });
+
+  it("leaves Gemini 2.5's thinking alone, which takes no thinking level", async () => {
+    const reply = () => geminiResponse({ candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason: "STOP" }] });
+    const fake = fakeFetch([reply, reply]);
+    await new GeminiModel({ model: "models/gemini-2.5-pro", apiKey: "k", effort: "high", fetch: fake.fn }).complete({ system: "s", user: "u" });
+    await new GeminiModel({ model: "gemini-3.1-pro-preview", apiKey: "k", fetch: fake.fn }).complete({ system: "s", user: "u" });
+    assert.match(fake.requests[0].url, /\/models\/gemini-2\.5-pro:generateContent$/);
+    assert.equal(fake.requests[0].body.generationConfig.thinkingConfig, undefined);
+    assert.equal(fake.requests[1].body.generationConfig.thinkingConfig, undefined);
+  });
+
+  it("reports blocked, cut-off and empty replies as unusable, still billed", async () => {
+    const fake = fakeFetch([
+      () => geminiResponse({ promptFeedback: { blockReason: "SAFETY" }, usageMetadata: { promptTokenCount: 50 } }),
+      () => geminiResponse({ candidates: [{ content: { parts: [{ text: '{"reasoning": "' }] }, finishReason: "MAX_TOKENS" }], usageMetadata: GEMINI_USAGE }),
+      () => geminiResponse({ candidates: [{ content: { parts: [] }, finishReason: "RECITATION" }] }),
+      () => geminiResponse({ candidates: [{ content: { parts: [{ text: "  " }] }, finishReason: "STOP" }] }),
+    ]);
+    const model = new GeminiModel({ model: "gemini-3.8-flash", apiKey: "k", fetch: fake.fn });
+    const problems = [];
+    for (let i = 0; i < 4; i++) {
+      const response = await model.complete({ system: "s", user: "u" });
+      problems.push("problem" in response ? response.problem : "ok");
+      if (i === 1) assert.equal(response.usage?.outputTokens, 580);
+    }
+    assert.deepEqual(problems, [
+      "the request was blocked (SAFETY)",
+      "the reply was cut off by the token limit",
+      "the reply stopped early (RECITATION)",
+      "the reply was empty",
+    ]);
+  });
+
+  it("classifies API errors, telling used-up credit and daily quota from a short rate limit", async () => {
+    const quota = (quotaId: string) =>
+      errorResponse(429, {
+        error: {
+          code: 429,
+          message: "You exceeded your current quota.",
+          status: "RESOURCE_EXHAUSTED",
+          details: [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaId }] }],
+        },
+      });
+    const fake = fakeFetch([
+      () => errorResponse(402, { error: { code: 402, message: "Your prepayment credits are depleted. Please go to AI Studio to add more.", status: "RESOURCE_EXHAUSTED" } }),
+      () => quota("GenerateRequestsPerDayPerProjectPerModel-FreeTier"),
+      () => errorResponse(429, { error: { code: 429, message: "Your project has exceeded its monthly spending cap.", status: "RESOURCE_EXHAUSTED" } }),
+      () => quota("GenerateRequestsPerMinutePerProjectPerModel"),
+      () => errorResponse(503, { error: { code: 503, message: "The model is overloaded.", status: "UNAVAILABLE" } }),
+      () => errorResponse(400, { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }),
+      () => errorResponse(404, { error: { code: 404, message: "models/gemini-nope is not found", status: "NOT_FOUND" } }),
+    ]);
+    const model = new GeminiModel({ model: "gemini-3.8-flash", apiKey: "k", fetch: fake.fn });
+    const call = () => model.complete({ system: "s", user: "u" });
+    await assert.rejects(call(), (err: Error) => {
+      assert.ok(err instanceof OutOfFundsError);
+      assert.equal(err.message, "Gemini API error 402: Your prepayment credits are depleted. Please go to AI Studio to add more.");
+      return true;
+    });
+    await assert.rejects(call(), OutOfFundsError);
+    await assert.rejects(call(), OutOfFundsError);
+    await assert.rejects(call(), TransientPlayerError);
+    await assert.rejects(call(), TransientPlayerError);
+    await assert.rejects(call(), (err) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError));
+    await assert.rejects(call(), (err) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError));
+  });
+
+  it("treats a failed connection as transient", async () => {
+    const model = new GeminiModel({
+      model: "gemini-3.8-flash",
+      apiKey: "k",
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch,
+    });
+    await assert.rejects(model.complete({ system: "s", user: "u" }), (err: Error) => err instanceof TransientPlayerError && /fetch failed/.test(err.message));
+  });
+});
+
+function grokResponse(content: string | null, extra: Record<string, unknown> = {}): Response {
+  const body = {
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    created: 0,
+    model: "grok-4.7",
+    choices: [{ index: 0, message: { role: "assistant", content, refusal: null }, finish_reason: "stop" }],
+    usage: {
+      prompt_tokens: 1300,
+      completion_tokens: 60,
+      total_tokens: 1760,
+      prompt_tokens_details: { cached_tokens: 1024 },
+      completion_tokens_details: { reasoning_tokens: 400 },
+    },
+    ...extra,
+  };
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+describe("Grok player", () => {
+  it("uses xAI's Chat Completions API with a strict JSON schema and counts reasoning as output", async () => {
+    const fake = fakeFetch([() => grokResponse(JSON.stringify({ ...DECISION, action: "resign", move: null }))]);
+    const model = new XaiModel({ model: "grok-4.7", apiKey: "xai-test", effort: "high", fetch: fake.fn });
+    const player = new LlmPlayer({ provider: "xai", model: "grok-4.7" }, model, { input: 2, output: 6, cachedInput: 0.5 });
+    const reply = await player.decide(turn());
+    assert.deepEqual(reply, {
+      ok: true,
+      decision: { action: "resign", move: null, offerDraw: false, reasoning: "Fighting for the center." },
+      // 276 fresh input tokens, 1024 cached, and 60 reply + 400 reasoning tokens of output.
+      spend: { calls: 1, inputTokens: 1300, cachedInputTokens: 1024, outputTokens: 460, costUsd: (276 * 2 + 1024 * 0.5 + 460 * 6) / 1e6 },
+    });
+    const { url, body, headers } = fake.requests[0];
+    assert.equal(url, "https://api.x.ai/v1/chat/completions");
+    assert.equal(headers.get("authorization"), "Bearer xai-test");
+    assert.equal(body.model, "grok-4.7");
+    assert.equal(body.response_format.type, "json_schema");
+    assert.equal(body.response_format.json_schema.strict, true);
+    assert.deepEqual(body.response_format.json_schema.schema.required, ["reasoning", "action", "move", "offer_draw"]);
+    assert.equal(body.reasoning_effort, "high");
+    assert.equal(body.messages[0].role, "system");
+    assert.match(body.messages[0].content, /playing a game of chess as Black/);
+    assert.match(body.messages[1].content, /Moves so far: 1\. e4/);
+  });
+
+  it("reports cut-off, refused and empty replies", async () => {
+    const fake = fakeFetch([
+      () => grokResponse('{"reasoning": "', { choices: [{ index: 0, message: { role: "assistant", content: '{"reasoning": "' }, finish_reason: "length" }] }),
+      () => grokResponse(null, { choices: [{ index: 0, message: { role: "assistant", content: null, refusal: "No." }, finish_reason: "stop" }] }),
+      () => grokResponse(""),
+    ]);
+    const model = new XaiModel({ model: "grok-4.3", apiKey: "k", fetch: fake.fn });
+    const problems = [];
+    for (let i = 0; i < 3; i++) {
+      const response = await model.complete({ system: "s", user: "u" });
+      problems.push("problem" in response ? response.problem : "ok");
+    }
+    assert.deepEqual(problems, ["the reply was cut off by the token limit", "the model declined to answer: No.", "the reply was empty"]);
+    assert.equal(fake.requests[0].body.reasoning_effort, undefined);
+  });
+
+  it("classifies API errors, recognizing a team out of credits", async () => {
+    const spendingLimit = () => errorResponse(429, { error: "Your team has reached its monthly spending limit." });
+    // The SDK retries 429s twice on its own before giving up.
+    const fake = fakeFetch([
+      () => errorResponse(403, { code: "The caller does not have permission to execute the specified operation", error: "Your team doesn't have any credits yet. Purchase credits on https://console.x.ai." }),
+      spendingLimit,
+      spendingLimit,
+      spendingLimit,
+      () => errorResponse(404, { code: "Some requested entity was not found", error: "The model grok-nope does not exist or your team does not have access to it." }),
+      () => errorResponse(401, { error: "Incorrect API key provided: xa***st." }),
+    ]);
+    const model = new XaiModel({ model: "grok-4.7", apiKey: "k", fetch: fake.fn });
+    const call = () => model.complete({ system: "s", user: "u" });
+    await assert.rejects(call(), (err: Error) => {
+      assert.ok(err instanceof OutOfFundsError);
+      assert.equal(err.message, "xAI API error 403: Your team doesn't have any credits yet. Purchase credits on https://console.x.ai.");
+      return true;
+    });
+    await assert.rejects(call(), (err: Error) => err instanceof OutOfFundsError && /429: Your team has reached its monthly spending limit/.test(err.message));
+    await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError) && /does not exist/.test(err.message));
+    await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && /401: Incorrect API key/.test(err.message));
   });
 });

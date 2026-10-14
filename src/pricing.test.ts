@@ -13,6 +13,16 @@ describe("pricing", () => {
     assert.equal(findPrice("gpt-5.6-terra-2026-07-09")?.input, 2);
     assert.equal(findPrice("my-model"), undefined);
     assert.deepEqual(findPrice("my-model", { "my-model": { input: 3, output: 4 } }), { input: 3, output: 4 });
+    assert.equal(findPrice("grok-4.7")?.output, 6);
+    assert.equal(findPrice("models/gemini-2.5-pro")?.input, 1.25);
+  });
+
+  it("switches to a built-in price on the day it changes", () => {
+    const flash = (iso: string) => findPrice("gemini-3.8-flash", {}, new Date(iso));
+    assert.deepEqual(flash("2026-12-31T23:59:59Z"), { input: 0.75, output: 3.75, cachedInput: 0.075 });
+    assert.deepEqual(flash("2027-01-01T00:00:00Z"), { input: 1.5, output: 7.5, cachedInput: 0.15 });
+    // config.ini still wins.
+    assert.equal(findPrice("gemini-3.8-flash", { "gemini-3.8-flash": { input: 1, output: 1 } }, new Date("2027-06-01"))?.input, 1);
   });
 
   it("prices plain, cached and cache-write input tokens and output tokens", () => {
