@@ -38,15 +38,29 @@ describe("game service", () => {
     assert.equal(assignColors([CLAUDE, GPT], "random").colorsAssigned, "random");
   });
 
-  it("saves games and marks ones interrupted by a restart as aborted", async () => {
+  it("saves games, and pauses ones interrupted by a restart so they can be resumed", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
     try {
       const store = new GameStore(dir);
+      // White was thinking with 200 s left when the app stopped.
       const stale = createGameRecord({ id: store.newId(), timeControl: parseTimeControl("5+3"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+      stale.clocks.white = 200_000;
+      stale.turnStartedAt = new Date().toISOString();
       store.save(stale);
       const service = new GameService(store, foolsMatePlayers);
       assert.equal(service.recoverInterrupted(), 1);
-      assert.equal(store.load(stale.id)?.status, "aborted");
+      const paused = store.load(stale.id)!;
+      assert.equal(paused.status, "paused");
+      assert.equal(paused.turnStartedAt, undefined);
+      assert.equal(paused.clocks.white, 200_000, "the interrupted turn starts over with the time it started with");
+      assert.deepEqual(
+        paused.events.map((e) => [e.type, e.color, e.ply]),
+        [["paused", "white", 0]],
+      );
+      assert.match(paused.events[0].message, /^Paused: the app stopped during White's turn\. Resume the game/);
+      assert.equal(service.recoverInterrupted(), 0, "a paused game stays paused");
+      service.resume(stale.id);
+      assert.equal((await service.wait(stale.id))?.result, "0-1");
 
       const game = service.start({ timeControl: "5+3", players: [CLAUDE, GPT], firstPlayerColor: "white" });
       const final = await service.wait(game.id);
@@ -231,10 +245,12 @@ describe("admin server", () => {
       mkdirSync(path.join(dir, "game"));
       writeFileSync(path.join(dir, "game", "b.ts"), "");
       writeFileSync(path.join(dir, "notes.md"), "");
+      writeFileSync(path.join(dir, "game", "b.test.ts"), "");
+      writeFileSync(path.join(dir, "testing.ts"), "");
       const started = newestSourceChange(dir);
       const later = new Date(Math.ceil(started) + 60_000);
-      utimesSync(path.join(dir, "notes.md"), later, later);
-      assert.equal(newestSourceChange(dir), started, "only source files count");
+      for (const file of ["notes.md", "game/b.test.ts", "testing.ts"]) utimesSync(path.join(dir, file), later, later);
+      assert.equal(newestSourceChange(dir), started, "only the app's source files count, not tests");
       utimesSync(path.join(dir, "game", "b.ts"), later, later);
       // Within a millisecond: file times can come back with float rounding.
       assert.ok(Math.abs(newestSourceChange(dir) - later.getTime()) < 1);

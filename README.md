@@ -8,7 +8,8 @@ can be imported from PGN too, and a game exported while paused can be resumed
 after importing it. Each model has an Elo rating for bullet, blitz, rapid and
 classical that moves with every finished game.
 
-ChatGPT (OpenAI API) and Claude (Anthropic API) are supported.
+ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
+(xAI API) are supported.
 
 ## Setup
 
@@ -16,11 +17,16 @@ ChatGPT (OpenAI API) and Claude (Anthropic API) are supported.
 npm install
 cp config.example.ini config.ini   # then add at least one API key
 npm start                          # http://127.0.0.1:3000/
+npm run dev                        # the same, restarting when the code or config.ini changes
 ```
 
 `config.ini` holds the API keys and is git-ignored. At least one key must be
 present; with a single key, models from that provider play each other (for
-example Claude vs Claude).
+example Claude vs Claude). Keys come from
+[platform.openai.com](https://platform.openai.com/api-keys),
+[platform.claude.com](https://platform.claude.com/settings/keys),
+[Google AI Studio](https://aistudio.google.com/apikey) and
+[console.x.ai](https://console.x.ai).
 
 ```ini
 [openai]
@@ -33,6 +39,16 @@ api_key = sk-ant-...
 models = claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5, claude-fable-5-1
 effort =
 
+[google]
+api_key = AIza...
+models = gemini-3.8-flash, gemini-3.1-pro-preview, gemini-2.5-pro, gemini-2.5-flash-lite
+effort =                                           ; thinking level, Gemini 3 and later
+
+[xai]
+api_key = xai-...
+models = grok-4.7, grok-4.6, grok-4.3
+effort =
+
 [app]
 host = 127.0.0.1
 port = 3000
@@ -40,8 +56,8 @@ games_dir = games
 ```
 
 The setup form suggests every model each key can use, fetched from the
-provider's API (OpenAI's list is narrowed to chat models that support
-structured outputs), with the `models` from `config.ini` that the key can use
+provider's API (OpenAI's, Google's and xAI's lists are narrowed to chat models
+that support structured outputs), with the `models` from `config.ini` that the key can use
 listed first. If the list can't be fetched, the form says why and suggests
 just the `models` lists. Any model ID can be typed in either way. Use
 `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
@@ -61,8 +77,11 @@ or its row in the games list) starts a game between the same two models with
 the same time control, with the colors swapped, kept or drawn at random. The
 page only listens on this machine by default. After updating Botwinnik (say,
 with `git pull`), restart it; until then the home page shows a reminder,
-because the page updates on reload but the running server doesn't. A restart
-ends games in progress, and paused games are kept.
+because the page updates on reload but the running server doesn't.
+`npm run dev` restarts by itself whenever the code or `config.ini` changes
+(changes to `public/` show on a page reload). Games running when the app
+stops come back paused: resume one and the turn it stopped in starts over,
+with the time the player had at its start.
 
 **Eval bar:** next to the board, Stockfish evaluates the position shown. The
 engine (Stockfish 18 lite, single-threaded WebAssembly, in
@@ -76,7 +95,7 @@ Eval button or E; the choice is remembered in the browser.
 npm run botwinnik -- play --time 5+3 --white claude-opus-5-5 --black gpt-5.6-sol
 npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # random colors
 npm run botwinnik -- models   # the models each key can use
-npm run botwinnik -- resume <game-id>   # continue a game paused for lack of funds
+npm run botwinnik -- resume <game-id>   # continue a paused game
 npm run botwinnik -- list
 npm run botwinnik -- ratings   # each model's Elo ratings (or: ratings blitz)
 npm run botwinnik -- pgn <game-id> --out game.pgn
@@ -84,7 +103,7 @@ npm run botwinnik -- import game.pgn   # a game without a result comes back paus
 ```
 
 A model can be written as `provider:model` (`openai:my-model`); the provider
-can be left out when the name starts with `claude` or `gpt`.
+can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
 
 ## Rules
 
@@ -118,20 +137,21 @@ can be left out when the name starts with `claude` or `gpt`.
   model) abort the game without a result.
 - **Out of funds:** if a call fails because the API account has run out of
   money (OpenAI's exhausted quota, Anthropic's billing error or low credit
-  balance), the game pauses with both clocks stopped. Add funds, then press
+  balance, Gemini's depleted prepaid credits, spending cap or used-up daily
+  quota, an xAI team with no credits or at its spending limit), the game pauses with both clocks stopped. Add funds, then press
   **Resume** on the game's page or run `botwinnik resume <game-id>`, and the
   game continues where it stopped, with the same player to move. Time spent
   paused doesn't count, and a paused game stays paused if the app is
   restarted. It can also be aborted.
 
 Each reply is a JSON object (`reasoning`, `action`, `move`, `offer_draw`)
-enforced through structured outputs on both APIs. Claude's refusal fallbacks
+enforced through structured outputs on every API. Claude's refusal fallbacks
 are deliberately not enabled, since they would let a different model play the
 move.
 
 ## Costs
 
-Both APIs report the tokens each call uses (thinking/reasoning tokens count as
+Every API reports the tokens each call uses (thinking/reasoning tokens count as
 output). Botwinnik multiplies them by the model's price and records the cost:
 
 - **per move:** every call in that turn, including rejected attempts such as
@@ -150,10 +170,15 @@ page says it's waiting for that call, and `play` waits for it before exiting
 (Ctrl+C skips the wait). A request still running when the app stops is lost
 and isn't counted.
 
-Prices (USD per million tokens) are built in for current Claude models and
-the GPT-5.6 models, as of October 2026. The GPT-5.6 prices come from
-third-party listings rather than OpenAI's own page, so check them. Set or
-override any model's price in `config.ini`:
+Prices (USD per million tokens) are built in for the current Claude,
+GPT-5.6, Gemini and Grok models, as of October 2026. The GPT-5.6 prices come
+from third-party listings rather than OpenAI's own page, and a few Gemini
+ones (2.5 Flash, 3.1 Flash-Lite, 3.5 Flash-Lite, 3.6 Flash) from LiteLLM's
+price list, so check them. Gemini 3.8 Flash is at its introductory price,
+which doubles on January 1, 2027; the built-in price switches on that date.
+Gemini and Grok charge more for prompts over 200k tokens, which a player's
+prompt never comes close to. Set or override any model's price in
+`config.ini`:
 
 ```ini
 [prices]
@@ -209,11 +234,12 @@ comments.
 **Import** (home page, or `botwinnik import game.pgn`) reads one game per PGN.
 A Botwinnik export comes back as it was, keeping its game ID unless a saved
 game already has it. PGNs from elsewhere work too when they have a
-`TimeControl` in seconds (`"300+3"`) and model names that start with `claude`
-or `gpt` (or `WhiteProvider`/`BlackProvider` tags saying `anthropic` or
-`openai`); their comments become the moves' reasoning. A game without a result
-is imported paused, ready to resume from its last position with the clocks it
-had, unless that position already ends the game.
+`TimeControl` in seconds (`"300+3"`) and model names that start with `claude`,
+`gpt`, `gemini` or `grok` (or `WhiteProvider`/`BlackProvider` tags saying
+`anthropic`, `openai`, `google` or `xai`); their comments become the moves'
+reasoning. A game without a result is imported paused, ready to resume from
+its last position with the clocks it had, unless that position already ends
+the game.
 
 ## Development
 
@@ -223,13 +249,31 @@ npm run typecheck
 ```
 
 `src/game` holds the engine (`game.ts`), PGN export and import, storage and
-the game service; `src/players` the prompts and the OpenAI and Anthropic clients;
+the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini
+and xAI clients;
 `src/server` the admin API; `public/` the web page.
 
 ### Dev container
 
 The repository started as a TypeScript project for a dev container with
 **Claude Code** and **Codex** preinstalled behind an egress firewall
-(`.devcontainer/init-firewall.sh`, allowing GitHub, npm, Anthropic and OpenAI
-among others). Open the folder in VS Code and run **Dev Containers: Reopen in
+(`.devcontainer/init-firewall.sh`, allowing GitHub, npm and the four model
+APIs among others). Open the folder in VS Code and run **Dev Containers: Reopen in
 Container**, or `devcontainer up --workspace-folder .`.
+
+To start Botwinnik with hot reload whenever the container starts, add
+`scripts/start-dev-server.sh` to the `postStartCommand` in
+`.devcontainer/devcontainer.json`, after the firewall script that already runs
+there, and forward the port:
+
+```jsonc
+"postStartCommand": "... && ${containerWorkspaceFolder}/scripts/start-dev-server.sh",
+"forwardPorts": [3000],
+```
+
+The script installs the dependencies if they're missing, then runs
+`npm run dev` in the background with its output in `dev-server.log`. Without a
+`config.ini` the server waits, and starts once the file is saved. The
+firewall resolves its allowed hosts when the container starts, and the
+container runs the copy of `init-firewall.sh` built into its image: rebuild
+the container after changing `ALLOWED_DOMAINS`.

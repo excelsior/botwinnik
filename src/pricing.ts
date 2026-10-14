@@ -29,10 +29,15 @@ export interface Spend {
 }
 
 /**
- * Standard (non-batch, short-context) API prices, as of October 2026.
+ * Standard (non-batch, short-context) API prices, as of October 2026. A
+ * player's prompt stays far below the 200k-token mark where Gemini and Grok
+ * charge more.
+ *
  * Claude prices are Anthropic's list prices. The GPT-5.6 prices come from
  * third-party listings of OpenAI's pricing after its July 30, 2026 price cut,
- * not from OpenAI's own page; override them in config.ini under [prices].
+ * not from OpenAI's own page. Gemini and Grok prices are from Google's and
+ * xAI's pricing pages, except the Gemini ones marked as coming from LiteLLM's
+ * price list. Override any of them in config.ini under [prices].
  */
 export const BUILT_IN_PRICES: Record<string, ModelPrice> = {
   "claude-fable-5-1": { input: 10, output: 50, cachedInput: 0.25 },
@@ -51,17 +56,41 @@ export const BUILT_IN_PRICES: Record<string, ModelPrice> = {
   "gpt-5.6": { input: 5, output: 30, cachedInput: 0.5 },
   "gpt-5.6-terra": { input: 2, output: 12, cachedInput: 0.2 },
   "gpt-5.6-luna": { input: 0.2, output: 1.2, cachedInput: 0.02 },
+  "gemini-3.8-flash": { input: 0.75, output: 3.75, cachedInput: 0.075 }, // introductory, until 2027 (see PRICE_CHANGES)
+  "gemini-3.1-pro-preview": { input: 2, output: 12, cachedInput: 0.2 },
+  "gemini-3-flash-preview": { input: 0.5, output: 3, cachedInput: 0.05 },
+  "gemini-2.5-pro": { input: 1.25, output: 10, cachedInput: 0.125 },
+  "gemini-2.5-flash-lite": { input: 0.1, output: 0.4, cachedInput: 0.01 },
+  "gemini-3.6-flash": { input: 0.75, output: 3.75 }, // LiteLLM
+  "gemini-3.5-flash-lite": { input: 0.3, output: 2.5 }, // LiteLLM
+  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5 }, // LiteLLM
+  "gemini-2.5-flash": { input: 0.3, output: 2.5 }, // LiteLLM
+  "grok-4.7": { input: 2, output: 6, cachedInput: 0.5 },
+  "grok-4.6": { input: 2, output: 6, cachedInput: 0.5 },
+  "grok-4.5": { input: 2, output: 6, cachedInput: 0.3 },
+  "grok-4.3": { input: 1.25, output: 2.5, cachedInput: 0.2 },
+  "grok-build-0.1": { input: 1, output: 2, cachedInput: 0.2 },
 };
 
+/** Built-in prices that change on a known date (UTC), and what they change to. */
+export const PRICE_CHANGES: Record<string, { from: string; price: ModelPrice }> = {
+  "gemini-3.8-flash": { from: "2027-01-01T00:00:00Z", price: { input: 1.5, output: 7.5, cachedInput: 0.15 } },
+};
+
+function builtInPrice(id: string, now: Date): ModelPrice | undefined {
+  const change = PRICE_CHANGES[id];
+  return change && now.getTime() >= Date.parse(change.from) ? change.price : BUILT_IN_PRICES[id];
+}
+
 /**
- * The price for a model: config.ini first, then the built-in table. Dated
- * snapshot IDs ("claude-x-20260101", "gpt-x-2026-01-01") fall back to their
- * base model's price.
+ * The price for a model at `now`: config.ini first, then the built-in table.
+ * Dated snapshot IDs ("claude-x-20260101", "gpt-x-2026-01-01") fall back to
+ * their base model's price, and "models/gemini-x" means "gemini-x".
  */
-export function findPrice(model: string, overrides: Record<string, ModelPrice> = {}): ModelPrice | undefined {
-  const id = model.trim().toLowerCase();
+export function findPrice(model: string, overrides: Record<string, ModelPrice> = {}, now = new Date()): ModelPrice | undefined {
+  const id = model.trim().toLowerCase().replace(/^models\//, "");
   const base = id.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, "");
-  return overrides[id] ?? BUILT_IN_PRICES[id] ?? overrides[base] ?? BUILT_IN_PRICES[base];
+  return overrides[id] ?? builtInPrice(id, now) ?? overrides[base] ?? builtInPrice(base, now);
 }
 
 export function costOf(usage: Usage, price: ModelPrice): number {

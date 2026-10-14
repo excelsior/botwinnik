@@ -1,0 +1,57 @@
+// Dev Container for botwinnik (TypeScript).
+// Ships Claude Code (`claude`) and Codex (`codex`) preinstalled, behind an
+// outbound-traffic firewall. No credentials are baked in — log in inside the
+// running container (see README.md).
+{
+  "name": "botwinnik (TypeScript · Claude Code + Codex)",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": { "TZ": "${localEnv:TZ:UTC}" }
+  },
+
+  // --name gives the container a stable name instead of a random Docker one.
+  // NET_ADMIN / NET_RAW let init-firewall.sh program iptables + ipset.
+  "runArgs": ["--name=botwinnik_devcontainer", "--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+
+  // Persist shell history + the agents' logins/config across rebuilds.
+  "mounts": [
+    "source=botwinnik-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    "source=botwinnik-claude-${devcontainerId},target=/home/node/.claude,type=volume",
+    "source=botwinnik-codex-${devcontainerId},target=/home/node/.codex,type=volume"
+  ],
+
+  // The admin page (`npm start`) listens on 127.0.0.1:6464 inside the container;
+  // forward it so http://localhost:6464/ opens on the host. Keep in sync with
+  // [app] port in config.ini.
+  "forwardPorts": [6464],
+  "portsAttributes": {
+    "6464": { "label": "Botwinnik", "onAutoForward": "openBrowser", "requireLocalPort": true }
+  },
+
+  "containerEnv": { "TZ": "${localEnv:TZ:UTC}", "DEVCONTAINER": "true" },
+  "remoteUser": "node",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": { "zsh": { "path": "/usr/bin/zsh" } }
+      }
+    }
+  },
+
+  // Sanity-check the toolchain once, after creation.
+  "postCreateCommand": "claude --version && codex --version && echo 'Tools ready. Authenticate with:  claude   and   codex login'",
+
+  // Re-apply the firewall on every start (iptables/ipset state isn't persisted).
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
+}

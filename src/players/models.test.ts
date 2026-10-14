@@ -58,6 +58,42 @@ describe("model lists", () => {
     assert.equal(fake.requests[0].headers.get("authorization"), "Bearer sk-test");
   });
 
+  it("lists Gemini models that can generate content across pages, newest version first", async () => {
+    const gemini = (name: string, displayName: string, methods = ["generateContent", "countTokens"]) => ({
+      name: `models/${name}`,
+      displayName,
+      supportedGenerationMethods: methods,
+    });
+    const fake = fakeFetch([
+      { models: [gemini("gemini-2.5-pro", "Gemini 2.5 Pro"), gemini("gemini-embedding-001", "Gemini Embedding", ["embedContent"])], nextPageToken: "next" },
+      { models: [gemini("gemini-3-pro", "Gemini 3 Pro")] },
+    ]);
+    const models = await listModels("google", "AIza-test", { fetch: fake.fn });
+    assert.deepEqual(models, [
+      { id: "gemini-3-pro", name: "Gemini 3 Pro" },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    ]);
+    assert.match(fake.requests[0].url, /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\?pageSize=1000$/);
+    assert.match(fake.requests[1].url, /pageToken=next$/);
+    assert.equal(fake.requests[0].headers.get("x-goog-api-key"), "AIza-test");
+  });
+
+  it("lists Grok models from xAI's API, newest first", async () => {
+    const fake = fakeFetch([
+      {
+        object: "list",
+        data: [
+          { id: "grok-3-mini", object: "model", created: 100, owned_by: "xai" },
+          { id: "grok-4", object: "model", created: 300, owned_by: "xai" },
+        ],
+      },
+    ]);
+    const models = await listModels("xai", "xai-test", { fetch: fake.fn });
+    assert.deepEqual(models.map((m) => m.id), ["grok-4", "grok-3-mini"]);
+    assert.equal(fake.requests[0].url, "https://api.x.ai/v1/models");
+    assert.equal(fake.requests[0].headers.get("authorization"), "Bearer xai-test");
+  });
+
   it("reports a rejected key", async () => {
     const fake = fakeFetch([{ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }], 401);
     await assert.rejects(
@@ -74,6 +110,14 @@ describe("model lists", () => {
       assert.ok(!canPlay("openai", id), id);
     }
     assert.ok(canPlay("anthropic", "claude-anything"));
+    for (const id of ["gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3-pro-preview", "gemini-3.5-flash", "gemini-flash-latest"]) {
+      assert.ok(canPlay("google", id), id);
+    }
+    for (const id of ["gemini-2.0-flash", "gemini-embedding-001", "gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-native-audio-latest", "gemini-live-2.5-flash", "gemma-3-27b-it", "imagen-4.0-generate-001"]) {
+      assert.ok(!canPlay("google", id), id);
+    }
+    for (const id of ["grok-4", "grok-4-1-fast-reasoning", "grok-3-mini", "grok-code-fast-1"]) assert.ok(canPlay("xai", id), id);
+    for (const id of ["grok-2-image-1212", "grok-imagine-video", "grok-imagine-image"]) assert.ok(!canPlay("xai", id), id);
   });
 
   it("suggests configured models first, then the rest that can play", () => {

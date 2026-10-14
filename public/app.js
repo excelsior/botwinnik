@@ -27,6 +27,8 @@ function saveSetting(key, value) {
   }
 }
 
+const PROVIDER_NAMES = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", xai: "Grok" };
+
 const GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TEXT = "︎"; // ask for the text (not emoji) form of the chess glyphs
 
@@ -51,7 +53,7 @@ function setChildren(el, ...children) {
   el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
 }
 
-const RESTART = "restart it (Ctrl+C, then npm start). A restart ends games in progress; paused games are kept.";
+const RESTART = "restart it (Ctrl+C, then npm start; npm run dev restarts by itself). Games in progress pause and can be resumed.";
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
@@ -191,7 +193,7 @@ function newGameForm(setup) {
     const providerSelect = h(
       "select",
       { id: `p${n}-provider`, "aria-label": `Player ${n} provider` },
-      setup.providers.map((p) => h("option", { value: p.id }, p.label)),
+      setup.providers.map((p) => h("option", { value: p.id }, PROVIDER_NAMES[p.id] ?? p.label)),
     );
     const picker = modelPicker(`p${n}-model`, `Player ${n} model`);
     const model = picker.input;
@@ -204,7 +206,7 @@ function newGameForm(setup) {
         ? `Couldn't fetch the model list, so the suggestions come from config.ini. ${provider.modelsError}`
         : "";
     };
-    // With both keys configured, default to one model from each provider.
+    // With more than one key configured, default to models from two providers.
     if (setup.providers.length > 1) providerSelect.value = setup.providers[defaultIndex % setup.providers.length].id;
     providerSelect.addEventListener("change", () => fill(0));
     fill(setup.providers.length > 1 ? 0 : defaultIndex);
@@ -544,7 +546,7 @@ function ratingsTable(models) {
             "tr",
             {},
             num(i + 1),
-            h("td", { title: m.provider === "anthropic" ? "Claude" : "ChatGPT" }, m.model),
+            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
             h("td", { class: "num rating-cell" }, m.rating),
             num(m.games),
             num(m.wins),
@@ -889,7 +891,7 @@ function showGame(id) {
           h("span", { class: `swatch ${color}`, title: capitalize(color) }),
           h("span", { class: "name" }, spec.model),
           ratings ? ratingTag(ratings[color]) : null,
-          h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
+          h("span", { class: "muted provider" }, PROVIDER_NAMES[spec.provider] ?? spec.provider),
           spendBadge(game.spend?.[color]),
           illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
           offer ? h("span", { class: "badge" }, "offers a draw") : null,
