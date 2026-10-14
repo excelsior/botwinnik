@@ -8,7 +8,8 @@ can be imported from PGN too, and a game exported while paused can be resumed
 after importing it. Each model has an Elo rating for bullet, blitz, rapid and
 classical that moves with every finished game.
 
-ChatGPT (OpenAI API) and Claude (Anthropic API) are supported.
+ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
+(xAI API) are supported.
 
 ## Setup
 
@@ -20,7 +21,11 @@ npm start                          # http://127.0.0.1:3000/
 
 `config.ini` holds the API keys and is git-ignored. At least one key must be
 present; with a single key, models from that provider play each other (for
-example Claude vs Claude).
+example Claude vs Claude). Keys come from
+[platform.openai.com](https://platform.openai.com/api-keys),
+[platform.claude.com](https://platform.claude.com/settings/keys),
+[Google AI Studio](https://aistudio.google.com/apikey) and
+[console.x.ai](https://console.x.ai).
 
 ```ini
 [openai]
@@ -40,8 +45,8 @@ games_dir = games
 ```
 
 The setup form suggests every model each key can use, fetched from the
-provider's API (OpenAI's list is narrowed to chat models that support
-structured outputs), with the `models` from `config.ini` that the key can use
+provider's API (OpenAI's, Google's and xAI's lists are narrowed to chat models
+that support structured outputs), with the `models` from `config.ini` that the key can use
 listed first. If the list can't be fetched, the form says why and suggests
 just the `models` lists. Any model ID can be typed in either way. Use
 `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
@@ -84,7 +89,7 @@ npm run botwinnik -- import game.pgn   # a game without a result comes back paus
 ```
 
 A model can be written as `provider:model` (`openai:my-model`); the provider
-can be left out when the name starts with `claude` or `gpt`.
+can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
 
 ## Rules
 
@@ -125,7 +130,7 @@ can be left out when the name starts with `claude` or `gpt`.
   restarted. It can also be aborted.
 
 Each reply is a JSON object (`reasoning`, `action`, `move`, `offer_draw`)
-enforced through structured outputs on both APIs. Claude's refusal fallbacks
+enforced through structured outputs on every API. Claude's refusal fallbacks
 are deliberately not enabled, since they would let a different model play the
 move.
 
@@ -209,11 +214,12 @@ comments.
 **Import** (home page, or `botwinnik import game.pgn`) reads one game per PGN.
 A Botwinnik export comes back as it was, keeping its game ID unless a saved
 game already has it. PGNs from elsewhere work too when they have a
-`TimeControl` in seconds (`"300+3"`) and model names that start with `claude`
-or `gpt` (or `WhiteProvider`/`BlackProvider` tags saying `anthropic` or
-`openai`); their comments become the moves' reasoning. A game without a result
-is imported paused, ready to resume from its last position with the clocks it
-had, unless that position already ends the game.
+`TimeControl` in seconds (`"300+3"`) and model names that start with `claude`,
+`gpt`, `gemini` or `grok` (or `WhiteProvider`/`BlackProvider` tags saying
+`anthropic`, `openai`, `google` or `xai`); their comments become the moves'
+reasoning. A game without a result is imported paused, ready to resume from
+its last position with the clocks it had, unless that position already ends
+the game.
 
 ## Development
 
@@ -223,7 +229,8 @@ npm run typecheck
 ```
 
 `src/game` holds the engine (`game.ts`), PGN export and import, storage and
-the game service; `src/players` the prompts and the OpenAI and Anthropic clients;
+the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini
+and xAI clients;
 `src/server` the admin API; `public/` the web page.
 
 ### Dev container

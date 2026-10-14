@@ -2,12 +2,14 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import type { ModelPrice } from "./pricing.js";
 
-export const PROVIDERS = ["openai", "anthropic"] as const;
+export const PROVIDERS = ["openai", "anthropic", "google", "xai"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   openai: "ChatGPT (OpenAI)",
   anthropic: "Claude (Anthropic)",
+  google: "Gemini (Google)",
+  xai: "Grok (xAI)",
 };
 
 export interface ProviderConfig {
@@ -31,6 +33,8 @@ export interface AppConfig {
 export const DEFAULT_MODELS: Record<Provider, string[]> = {
   openai: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
   anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
+  google: [],
+  xai: [],
 };
 
 export type IniData = Record<string, Record<string, string>>;
@@ -88,7 +92,7 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
   }
   if (Object.keys(providers).length === 0) {
     throw new ConfigError(
-      "config.ini must contain at least one API key: set api_key under [openai] or [anthropic].",
+      `config.ini must contain at least one API key: set api_key under ${PROVIDERS.map((p) => `[${p}]`).join(", ").replace(/, ([^,]*)$/, " or $1")}.`,
     );
   }
   const app = ini.app ?? {};
@@ -134,11 +138,13 @@ export function loadConfig(file = defaultConfigPath()): AppConfig {
   return configFromIni(parseIni(readFileSync(file, "utf8")), path.dirname(file));
 }
 
-/** Guesses the provider from a model ID, e.g. "claude-..." → anthropic, "gpt-..." → openai. */
+/** Guesses the provider from a model ID: claude-... is Anthropic's, gpt-... OpenAI's, gemini-... Google's, grok-... xAI's. */
 export function inferProvider(model: string): Provider | undefined {
-  const m = model.toLowerCase();
+  const m = model.toLowerCase().replace(/^models\//, "");
   if (m.startsWith("claude")) return "anthropic";
   if (m.startsWith("gpt") || m.startsWith("chatgpt") || /^o\d/.test(m)) return "openai";
+  if (m.startsWith("gemini")) return "google";
+  if (m.startsWith("grok")) return "xai";
   return undefined;
 }
 
@@ -148,6 +154,10 @@ const PROVIDER_ALIASES: Record<string, Provider> = {
   gpt: "openai",
   anthropic: "anthropic",
   claude: "anthropic",
+  google: "google",
+  gemini: "google",
+  xai: "xai",
+  grok: "xai",
 };
 
 /** Parses "provider:model" (provider optional when it can be inferred from the model ID). */
@@ -157,13 +167,13 @@ export function parsePlayerSpec(text: string): { provider: Provider; model: stri
   if (colon > 0) {
     const provider = PROVIDER_ALIASES[trimmed.slice(0, colon).toLowerCase()];
     const model = trimmed.slice(colon + 1).trim();
-    if (!provider) throw new ConfigError(`Unknown provider in "${text}". Use openai or anthropic.`);
+    if (!provider) throw new ConfigError(`Unknown provider in "${text}". Use ${PROVIDERS.join(", ")}.`);
     if (!model) throw new ConfigError(`Missing model in "${text}".`);
     return { provider, model };
   }
   const provider = inferProvider(trimmed);
   if (!provider) {
-    throw new ConfigError(`Can't tell which provider "${text}" belongs to. Write it as openai:<model> or anthropic:<model>.`);
+    throw new ConfigError(`Can't tell which provider "${text}" belongs to. Write it as provider:<model>, with provider one of ${PROVIDERS.join(", ")}.`);
   }
   return { provider, model: trimmed };
 }

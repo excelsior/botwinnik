@@ -2,7 +2,9 @@ import type { AppConfig } from "../config.js";
 import type { Player, PlayerReply, PlayerSpec, TurnInfo } from "../game/types.js";
 import { findPrice, spendOf, type ModelPrice, type Usage } from "../pricing.js";
 import { AnthropicModel } from "./anthropic.js";
+import { GeminiModel } from "./gemini.js";
 import { OpenAIModel } from "./openai.js";
+import { XaiModel } from "./xai.js";
 import { parseDecision, systemPrompt, turnPrompt } from "./prompt.js";
 
 export interface ModelRequest {
@@ -47,10 +49,13 @@ export function playerFactory(config: AppConfig): PlayerFactory {
   return (spec) => {
     const provider = config.providers[spec.provider];
     if (!provider) throw new Error(`config.ini has no API key for ${spec.provider}.`);
-    const model =
-      spec.provider === "anthropic"
-        ? new AnthropicModel({ model: spec.model, apiKey: provider.apiKey, effort: provider.effort })
-        : new OpenAIModel({ model: spec.model, apiKey: provider.apiKey, effort: provider.effort });
-    return new LlmPlayer(spec, model, findPrice(spec.model, config.prices));
+    const options = { model: spec.model, apiKey: provider.apiKey, effort: provider.effort };
+    const clients: Record<PlayerSpec["provider"], () => ModelClient> = {
+      openai: () => new OpenAIModel(options),
+      anthropic: () => new AnthropicModel(options),
+      google: () => new GeminiModel(options),
+      xai: () => new XaiModel(options),
+    };
+    return new LlmPlayer(spec, clients[spec.provider](), findPrice(spec.model, config.prices));
   };
 }

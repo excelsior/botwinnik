@@ -114,7 +114,13 @@ describe("config", () => {
   });
 
   it("requires at least one API key", () => {
-    assert.throws(() => configFromIni(parseIni("[openai]\napi_key =\n[anthropic]\n")), /at least one API key/);
+    assert.throws(
+      () => configFromIni(parseIni("[openai]\napi_key =\n[anthropic]\n")),
+      /at least one API key: set api_key under \[openai\], \[anthropic\], \[google\] or \[xai\]/,
+    );
+    const gemini = configFromIni(parseIni("[google]\napi_key = AIza-test\n[xai]\napi_key = xai-test\neffort = low\n"));
+    assert.deepEqual(Object.keys(gemini.providers), ["google", "xai"]);
+    assert.equal(gemini.providers.xai!.effort, "low");
     const config = configFromIni(parseIni("[anthropic]\napi_key = sk-ant\n"), "/srv");
     assert.deepEqual(Object.keys(config.providers), ["anthropic"]);
     assert.ok(config.providers.anthropic!.models.length > 0, "default models are filled in");
@@ -139,6 +145,10 @@ describe("config", () => {
     assert.deepEqual(parsePlayerSpec("gpt-5.6-sol"), { provider: "openai", model: "gpt-5.6-sol" });
     assert.deepEqual(parsePlayerSpec("openai:my-model"), { provider: "openai", model: "my-model" });
     assert.deepEqual(parsePlayerSpec("claude:claude-x"), { provider: "anthropic", model: "claude-x" });
+    assert.deepEqual(parsePlayerSpec("gemini-3-pro"), { provider: "google", model: "gemini-3-pro" });
+    assert.deepEqual(parsePlayerSpec("grok-4"), { provider: "xai", model: "grok-4" });
+    assert.deepEqual(parsePlayerSpec("gemini:my-tuned-model"), { provider: "google", model: "my-tuned-model" });
+    assert.deepEqual(parsePlayerSpec("xai:grok-x"), { provider: "xai", model: "grok-x" });
     assert.throws(() => parsePlayerSpec("mystery-model"), /provider/);
     assert.throws(() => parsePlayerSpec("bard:x"), /Unknown provider/);
   });

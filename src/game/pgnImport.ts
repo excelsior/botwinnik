@@ -278,7 +278,7 @@ function player(tags: Record<string, string>, color: Color): { provider: Provide
   const provider = PROVIDERS.find((p) => p === given) ?? inferProvider(model);
   if (!provider) {
     throw new PgnImportError(
-      `Can't tell whether ${side} ("${model}") is a Claude or a ChatGPT model. Add [${side}Provider "anthropic"] or [${side}Provider "openai"] to the PGN.`,
+      `Can't tell which provider ${side} ("${model}") comes from. Add [${side}Provider "..."] to the PGN, with ${PROVIDERS.map((p) => `"${p}"`).join(", ")}.`,
     );
   }
   return { provider, model };

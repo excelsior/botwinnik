@@ -27,6 +27,8 @@ function saveSetting(key, value) {
   }
 }
 
+const PROVIDER_NAMES = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", xai: "Grok" };
+
 const GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TEXT = "︎"; // ask for the text (not emoji) form of the chess glyphs
 
@@ -544,7 +546,7 @@ function ratingsTable(models) {
             "tr",
             {},
             num(i + 1),
-            h("td", { title: m.provider === "anthropic" ? "Claude" : "ChatGPT" }, m.model),
+            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
             h("td", { class: "num rating-cell" }, m.rating),
             num(m.games),
             num(m.wins),
@@ -889,7 +891,7 @@ function showGame(id) {
           h("span", { class: `swatch ${color}`, title: capitalize(color) }),
           h("span", { class: "name" }, spec.model),
           ratings ? ratingTag(ratings[color]) : null,
-          h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
+          h("span", { class: "muted provider" }, PROVIDER_NAMES[spec.provider] ?? spec.provider),
           spendBadge(game.spend?.[color]),
           illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
           offer ? h("span", { class: "badge" }, "offers a draw") : null,
