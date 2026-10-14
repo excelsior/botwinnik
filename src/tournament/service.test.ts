@@ -225,6 +225,21 @@ describe("tournaments", () => {
     assert.equal(tournaments.resumeRunning(), 0);
   });
 
+  it("counts a 10+0 tournament saved as blitz as rapid", () => {
+    tournaments.store.save({
+      version: 1,
+      id: "old",
+      name: "Old",
+      status: "aborted",
+      createdAt: new Date().toISOString(),
+      timeControl: { baseMs: 600_000, incrementMs: 0, label: "10+0", category: "blitz" },
+      players: [A, B, C],
+      rounds: [],
+    });
+    assert.equal(tournaments.get("old")?.timeControl.category, "rapid");
+    assert.equal(tournaments.list()[0].category, "rapid");
+  });
+
   it("checks the players", () => {
     assert.throws(() => tournaments.create({ timeControl: "5+3", players: [A, B] }), /at least 3 players/);
     assert.throws(

@@ -69,7 +69,7 @@ export class TournamentStore {
     if (!/^[\w-]+$/.test(id)) return undefined;
     const file = this.file(id);
     if (!existsSync(file)) return undefined;
-    return JSON.parse(readFileSync(file, "utf8")) as TournamentRecord;
+    return read(file);
   }
 
   list(): TournamentRecord[] {
@@ -77,7 +77,7 @@ export class TournamentStore {
       .filter((f) => f.endsWith(".json"))
       .flatMap((f) => {
         try {
-          return [JSON.parse(readFileSync(path.join(this.dir, f), "utf8")) as TournamentRecord];
+          return [read(path.join(this.dir, f))];
         } catch {
           return [];
         }
@@ -306,6 +306,13 @@ export class TournamentService {
     for (const resolve of this.waiters.get(tournament.id) ?? []) resolve(tournament);
     this.waiters.delete(tournament.id);
   }
+}
+
+/** A saved tournament, its category worked out again like its games' (see GameStore). */
+function read(file: string): TournamentRecord {
+  const tournament = JSON.parse(readFileSync(file, "utf8")) as TournamentRecord;
+  tournament.timeControl.category = timeCategory(tournament.timeControl);
+  return tournament;
 }
 
 /** Every game a tournament started, in schedule order. */

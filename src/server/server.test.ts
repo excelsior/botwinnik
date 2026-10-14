@@ -163,6 +163,23 @@ describe("game service", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("rates a 10+0 game saved as blitz as rapid", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      const game = createGameRecord({ id: store.newId(), timeControl: parseTimeControl("10+0"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+      Object.assign(game, { status: "finished", result: "1-0", finishedAt: new Date().toISOString() });
+      game.timeControl.category = "blitz"; // as saved before 10+0 counted as rapid
+      store.save(game);
+      assert.equal(store.load(game.id)?.timeControl.category, "rapid");
+      const ratings = new GameService(store, foolsMatePlayers).ratings();
+      assert.deepEqual(ratings.table("blitz"), []);
+      assert.deepEqual(ratings.table("rapid").map((m) => m.model).sort(), ["claude-test", "gpt-test"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("admin server", () => {

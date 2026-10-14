@@ -30,13 +30,14 @@ describe("time controls", () => {
     assert.equal(pgnTimeControl(parseTimeControl("5+3")), "300+3");
   });
 
-  it("categorizes by FIDE's base + 60 × increment", () => {
+  it("categorizes by base + 60 × increment", () => {
     const cat = (s: string) => timeCategory(parseTimeControl(s));
     assert.equal(cat("1+0"), "bullet");
     assert.equal(cat("2+1"), "blitz"); // 2 + 1 = 3 minutes
     assert.equal(cat("3+2"), "blitz");
     assert.equal(cat("5+3"), "blitz"); // 5 + 3 = 8 minutes
-    assert.equal(cat("10+0"), "blitz");
+    assert.equal(cat("9+0"), "blitz");
+    assert.equal(cat("10+0"), "rapid");
     assert.equal(cat("10+5"), "rapid");
     assert.equal(cat("15+10"), "rapid");
     assert.equal(cat("45+0"), "rapid");

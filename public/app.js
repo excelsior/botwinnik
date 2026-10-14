@@ -522,7 +522,7 @@ function ratingsCard({ start, k, categories }) {
       "p",
       { class: "muted note" },
       `Elo ratings from finished games, in the order they ended, kept separately for each time control. ` +
-        `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, up to 10 blitz, under 60 rapid, and 60 or more classical. ` +
+        `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, under 10 blitz, under 60 rapid, and 60 or more classical. ` +
         `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
     ),
   ];

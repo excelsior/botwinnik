@@ -125,10 +125,10 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
   move loses the game. A reply with no usable move at all (unreadable, a
   refusal, accepting a draw nobody offered) is asked for again without
   penalty, but three in a row within one turn count as an illegal move.
-- **Categories** follow FIDE, based on the time for a 60-move game
-  (base + 60 × increment): up to 10 minutes is blitz (under 3 is bullet),
-  under 60 minutes is rapid, 60 minutes or more is classical. So `30+30`
-  and `60+0` are classical, `15+10` is rapid.
+- **Categories** are based on the time for a 60-move game (base + 60 ×
+  increment), as FIDE does: under 10 minutes is blitz (under 3 is bullet),
+  under 60 minutes is rapid, 60 minutes or more is classical. So `10+0` and
+  `15+10` are rapid, `30+30` and `60+0` classical.
 - **What players see** each turn: the position (FEN and a diagram), the moves
   so far, both clocks, any pending draw offer, whether they may offer a draw,
   their illegal-move count, and their own last few explanations. They do not
@@ -196,8 +196,8 @@ unknown.
 Every model has a separate Elo rating for each time control category:
 bullet, blitz, rapid and classical. A game's category comes from its base
 time plus 60 increments (the time for a 60-move game): under 3 minutes is
-bullet, up to 10 minutes blitz, under 60 minutes rapid, and 60 minutes or more
-classical. 5+3 is blitz, 10+5 rapid and 90+30 classical.
+bullet, under 10 minutes blitz, under 60 minutes rapid, and 60 minutes or more
+classical. 5+3 is blitz, 10+0 rapid and 90+30 classical.
 
 Each rating starts at 1500. Each finished game moves its players' ratings in
 its category by K × (score − expected score), with K = 32 and the expected

@@ -39,15 +39,16 @@ function trimNumber(n: number): string {
 }
 
 /**
- * FIDE's definition, based on the time each player gets for a 60-move game
- * (base + 60 × increment): 10 minutes or less is blitz, under 60 minutes is
- * rapid, 60 minutes or more is classical (FIDE "standard"). FIDE has no bullet
- * category; the usual under-3-minutes split is used for it.
+ * Based on the time each player gets for a 60-move game (base + 60 ×
+ * increment), as FIDE does: under 10 minutes is blitz, under 60 minutes is
+ * rapid, 60 minutes or more is classical (FIDE "standard"). Unlike FIDE, which
+ * puts exactly 10 minutes in blitz, 10+0 is rapid, as on chess.com and Lichess.
+ * FIDE has no bullet category; the usual under-3-minutes split is used for it.
  */
 export function timeCategory(tc: TimeControl): TimeCategory {
   const estimatedMs = tc.baseMs + 60 * tc.incrementMs;
   if (estimatedMs < 3 * MINUTE) return "bullet";
-  if (estimatedMs <= 10 * MINUTE) return "blitz";
+  if (estimatedMs < 10 * MINUTE) return "blitz";
   if (estimatedMs < 60 * MINUTE) return "rapid";
   return "classical";
 }
