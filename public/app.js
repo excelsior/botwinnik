@@ -157,7 +157,7 @@ async function showHome() {
     const finished = games.filter((g) => g.status === "finished").map((g) => g.id).join();
     if (finished === ratedGames) return;
     try {
-      ratingsSection.replaceChildren(h("h2", {}, "Ratings"), ratingsTable(await api("/ratings")));
+      ratingsSection.replaceChildren(...ratingsCard(await api("/ratings")));
       ratedGames = finished;
     } catch (err) {
       ratingsSection.replaceChildren(h("h2", {}, "Ratings"), h("p", { class: "error" }, err.message));
@@ -440,52 +440,111 @@ function importForm() {
   );
 }
 
-function ratingsTable({ start, k, models }) {
-  if (!models.length) return h("p", { class: "muted" }, `No rated games yet. Every model starts at ${start}.`);
-  const num = (value) => h("td", { class: "num" }, value);
-  return h(
-    "div",
-    {},
+const CATEGORY_NAMES = { bullet: "Bullet", blitz: "Blitz", rapid: "Rapid", classical: "Classical" };
+const RATINGS_TAB_SETTING = "botwinnik.ratingsTab";
+
+/**
+ * The ratings card's contents: a tab per time category, each with its own
+ * table. `categories` maps bullet, blitz, rapid and classical to their models.
+ */
+function ratingsCard({ start, k, categories }) {
+  const order = Object.keys(categories);
+  const gamesIn = (c) => categories[c].reduce((sum, m) => sum + m.games, 0) / 2;
+  if (!order.some(gamesIn)) {
+    return [h("h2", {}, "Ratings"), h("p", { class: "muted" }, `No rated games yet. Every model starts at ${start} in each time control.`)];
+  }
+  // The tab picked last time, or the time control with the most games.
+  let current = loadSetting(RATINGS_TAB_SETTING, null);
+  if (!order.includes(current)) current = order.reduce((best, c) => (gamesIn(c) > gamesIn(best) ? c : best));
+
+  const panel = h("div", { role: "tabpanel", id: "ratings-panel" });
+  const tabs = order.map((c) =>
     h(
-      "div",
-      { class: "table-wrap" },
-      h(
-        "table",
-        { class: "ratings" },
-        h(
-          "thead",
-          {},
-          h(
-            "tr",
-            {},
-            h("th", { class: "num" }, "#"),
-            h("th", {}, "Model"),
-            ["Rating", "Games", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
-          ),
-        ),
-        h(
-          "tbody",
-          {},
-          models.map((m, i) =>
-            h(
-              "tr",
-              {},
-              num(i + 1),
-              h("td", { title: m.provider === "anthropic" ? "Claude" : "ChatGPT" }, m.model),
-              h("td", { class: "num rating-cell" }, m.rating),
-              num(m.games),
-              num(m.wins),
-              num(m.draws),
-              num(m.losses),
-            ),
-          ),
-        ),
-      ),
+      "button",
+      {
+        type: "button",
+        class: "chip",
+        role: "tab",
+        id: `ratings-tab-${c}`,
+        "aria-controls": "ratings-panel",
+        onclick: () => select(c),
+        onkeydown: (e) => {
+          const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!step) return;
+          const next = order[(order.indexOf(current) + step + order.length) % order.length];
+          select(next);
+          tabs[order.indexOf(next)].focus();
+        },
+      },
+      CATEGORY_NAMES[c] ?? c,
     ),
+  );
+  const select = (c) => {
+    current = c;
+    saveSetting(RATINGS_TAB_SETTING, c);
+    tabs.forEach((tab, i) => {
+      const selected = order[i] === c;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    panel.setAttribute("aria-labelledby", `ratings-tab-${c}`);
+    panel.replaceChildren(
+      categories[c].length
+        ? ratingsTable(categories[c])
+        : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
+    );
+  };
+  select(current);
+
+  return [
+    h("div", { class: "card-head" }, h("h2", {}, "Ratings"), h("div", { class: "chips tabs", role: "tablist", "aria-label": "Time control" }, tabs)),
+    panel,
     h(
       "p",
       { class: "muted note" },
-      `Elo ratings from finished games, in the order they ended. Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
+      `Elo ratings from finished games, in the order they ended, kept separately for each time control. ` +
+        `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, up to 10 blitz, under 60 rapid, and 60 or more classical. ` +
+        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
+    ),
+  ];
+}
+
+function ratingsTable(models) {
+  const num = (value) => h("td", { class: "num" }, value);
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      { class: "ratings" },
+      h(
+        "thead",
+        {},
+        h(
+          "tr",
+          {},
+          h("th", { class: "num" }, "#"),
+          h("th", {}, "Model"),
+          ["Rating", "Games", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
+        ),
+      ),
+      h(
+        "tbody",
+        {},
+        models.map((m, i) =>
+          h(
+            "tr",
+            {},
+            num(i + 1),
+            h("td", { title: m.provider === "anthropic" ? "Claude" : "ChatGPT" }, m.model),
+            h("td", { class: "num rating-cell" }, m.rating),
+            num(m.games),
+            num(m.wins),
+            num(m.draws),
+            num(m.losses),
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -774,11 +833,12 @@ function showGame(id) {
 
   /** The rating going into the game, and what the game did to it once it's over. */
   function ratingTag({ before, after }) {
-    if (after === undefined) return h("span", { class: "rating", title: "Elo rating" }, String(before));
+    const kind = `${CATEGORY_NAMES[game.timeControl.category] ?? ""} Elo rating`.trim();
+    if (after === undefined) return h("span", { class: "rating", title: kind }, String(before));
     const delta = after - before;
     return h(
       "span",
-      { class: "rating", title: `Elo rating: ${before} before this game, ${after} after it` },
+      { class: "rating", title: `${kind}: ${before} before this game, ${after} after it` },
       String(before),
       h("span", { class: `rating-change${delta > 0 ? " up" : delta < 0 ? " down" : ""}` }, delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : "±0"),
     );

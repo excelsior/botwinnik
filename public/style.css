@@ -412,6 +412,25 @@ button.danger {
   font-size: 13px;
 }
 
+.chip[aria-selected="true"] {
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-color: var(--info-bg);
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.card-head h2 {
+  margin: 0;
+}
+
 /* Positioned so hidden labels inside are clipped with the table instead of widening the page. */
 .table-wrap {
   position: relative;
@@ -439,6 +458,12 @@ table.ratings th {
   font-size: 13px;
   color: var(--muted);
   font-weight: 600;
+}
+
+/* Tighter across, so a row with a long time control (90+30) still fits beside the form. */
+table.games th,
+table.games td {
+  padding: 8px 6px;
 }
 
 table.ratings .num {

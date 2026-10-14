@@ -10,7 +10,7 @@ import type { GameRecord } from "./game/types.js";
 import { playerFactory } from "./players/llmPlayer.js";
 import { canPlay, listModels } from "./players/models.js";
 import { createServer } from "./server/server.js";
-import { formatClock } from "./timeControl.js";
+import { formatClock, TIME_CATEGORIES, type TimeCategory } from "./timeControl.js";
 import { formatUsd } from "./pricing.js";
 
 const USAGE = `Usage:
@@ -32,8 +32,9 @@ const USAGE = `Usage:
   botwinnik list
       List saved games.
 
-  botwinnik ratings
-      Show each model's Elo rating. Every model starts at ${START_RATING}, and each
+  botwinnik ratings [bullet|blitz|rapid|classical]
+      Show each model's Elo ratings, one table per time category (or just the
+      one given). Every model starts at ${START_RATING} in each category, and each
       finished game moves its players' ratings (K = ${K_FACTOR}).
 
   botwinnik pgn <game-id> [--out file.pgn]
@@ -105,7 +106,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "ratings":
-      return printRatings(service);
+      return printRatings(service, rest[0]);
     case "import": {
       if (!rest[0]) throw new ConfigError("Give the PGN file to import: botwinnik import game.pgn");
       const game = service.importPgn(readFileSync(rest[0], "utf8"));
@@ -142,17 +143,29 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
   });
 }
 
-function printRatings(service: GameService): number {
-  const table = service.ratings().table();
-  if (!table.length) {
+function printRatings(service: GameService, only?: string): number {
+  if (only !== undefined && !TIME_CATEGORIES.includes(only as TimeCategory)) {
+    throw new ConfigError(`Unknown time category "${only}". Use ${TIME_CATEGORIES.join(", ")}.`);
+  }
+  const tables = service.ratings().tables();
+  const categories = only ? [only as TimeCategory] : TIME_CATEGORIES.filter((c) => tables[c].length);
+  if (!categories.length) {
     console.log(`No finished games yet. Every model starts at ${START_RATING}.`);
     return 0;
   }
-  const width = Math.max(...table.map((m) => m.model.length), "Model".length);
-  console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L`);
-  table.forEach((m, i) => {
-    const counts = [m.games, m.wins, m.draws, m.losses].map((n, j) => String(n).padStart(j ? 3 : 5)).join(" ");
-    console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}`);
+  categories.forEach((category, n) => {
+    const table = tables[category];
+    console.log(`${n ? "\n" : ""}${category[0].toUpperCase()}${category.slice(1)}`);
+    if (!table.length) {
+      console.log(`  No finished ${category} games yet. Every model starts at ${START_RATING}.`);
+      return;
+    }
+    const width = Math.max(...table.map((m) => m.model.length), "Model".length);
+    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L`);
+    table.forEach((m, i) => {
+      const counts = [m.games, m.wins, m.draws, m.losses].map((c, j) => String(c).padStart(j ? 3 : 5)).join(" ");
+      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}`);
+    });
   });
   return 0;
 }
@@ -250,7 +263,8 @@ async function follow(service: GameService, game: GameRecord, printedMoves = 0, 
       const delta = after - before;
       return `${final[color].model} ${before} → ${after} (${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${Math.abs(delta)})`;
     };
-    console.log(`Ratings: ${change("white")}, ${change("black")}`);
+    const category = final.timeControl.category;
+    console.log(`${category[0].toUpperCase()}${category.slice(1)} ratings: ${change("white")}, ${change("black")}`);
   }
   console.log(`Saved as ${final.id}. Export with: botwinnik pgn ${final.id}`);
   return 0;

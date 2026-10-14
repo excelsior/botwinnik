@@ -256,13 +256,15 @@ describe("admin server", () => {
     assert.deepEqual(ratings, { white: { before: 1500, after: 1484 }, black: { before: 1500, after: 1516 } });
     const table = await (await fetch(`${base}/api/ratings`)).json();
     assert.equal(table.start, 1500);
+    assert.deepEqual(Object.keys(table.categories), ["bullet", "blitz", "rapid", "classical"]);
     assert.deepEqual(
-      table.models.map((m: { model: string; rating: number; wins: number }) => [m.model, m.rating, m.wins]),
+      table.categories.blitz.map((m: { model: string; rating: number; wins: number }) => [m.model, m.rating, m.wins]),
       [
         ["gpt-test", 1516, 1],
         ["claude-test", 1484, 0],
       ],
     );
+    assert.deepEqual(table.categories.rapid, []);
 
     const events = await fetch(`${base}/api/games/${game.id}/events`);
     assert.equal(events.headers.get("content-type"), "text/event-stream");

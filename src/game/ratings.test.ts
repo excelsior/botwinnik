@@ -2,16 +2,29 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CLAUDE, GPT } from "../testing.js";
 import { expectedScore, K_FACTOR, rateGames, ratingDelta, START_RATING, type RatedGame } from "./ratings.js";
+import type { TimeCategory } from "../timeControl.js";
 import type { PlayerSpec } from "./types.js";
 
 const OTHER: PlayerSpec = { provider: "openai", model: "gpt-other" };
 
 let minute = 0;
-/** A game that ended `minute` minutes after the first one. */
+/** A blitz game (unless `extra` says otherwise) that ended a minute after the one made before it. */
 function game(white: PlayerSpec, black: PlayerSpec, result: RatedGame["result"], extra: Partial<RatedGame> = {}): RatedGame {
   const at = new Date(Date.UTC(2026, 9, 14, 12, minute++)).toISOString();
-  return { id: `g${minute}`, status: result === "*" ? "running" : "finished", createdAt: at, finishedAt: at, white, black, result, ...extra };
+  return {
+    id: `g${minute}`,
+    status: result === "*" ? "running" : "finished",
+    createdAt: at,
+    finishedAt: at,
+    timeControl: { category: "blitz" },
+    white,
+    black,
+    result,
+    ...extra,
+  };
 }
+
+const inCategory = (category: TimeCategory) => ({ timeControl: { category } });
 
 describe("Elo ratings", () => {
   it("expects equal players to split the points and a 400-point favorite to score about 91%", () => {
@@ -32,7 +45,7 @@ describe("Elo ratings", () => {
     assert.deepEqual(ratings.forGame(games[1]), { white: { before: 1484, after: 1485 }, black: { before: 1516, after: 1515 } });
     assert.deepEqual(ratings.forGame(games[2]), { white: { before: 1485, after: 1470 }, black: { before: 1500, after: 1515 } });
     assert.deepEqual(
-      ratings.table().map(({ model, rating, games, wins, draws, losses }) => [model, rating, games, wins, draws, losses]),
+      ratings.table("blitz").map(({ model, rating, games, wins, draws, losses }) => [model, rating, games, wins, draws, losses]),
       [
         // Tied on rating: more games first.
         ["claude-test", 1515, 2, 1, 1, 0],
@@ -40,7 +53,39 @@ describe("Elo ratings", () => {
         ["gpt-test", 1470, 3, 0, 1, 2],
       ],
     );
-    assert.equal(ratings.rating({ provider: "anthropic", model: "claude-new" }), START_RATING);
+    assert.equal(ratings.rating({ provider: "anthropic", model: "claude-new" }, "blitz"), START_RATING);
+  });
+
+  it("keeps separate ratings for bullet, blitz, rapid and classical", () => {
+    const blitz = game(CLAUDE, GPT, "1-0");
+    const bullet = game(GPT, CLAUDE, "1-0", inCategory("bullet"));
+    const classical = game(CLAUDE, GPT, "1/2-1/2", inCategory("classical"));
+    const rapid = game(CLAUDE, GPT, "*", inCategory("rapid"));
+    const ratings = rateGames([blitz, bullet, classical, rapid]);
+    // Each category starts both models afresh, whatever happened in the others.
+    assert.deepEqual(ratings.forGame(bullet), { white: { before: 1500, after: 1516 }, black: { before: 1500, after: 1484 } });
+    assert.deepEqual(ratings.forGame(classical), { white: { before: 1500, after: 1500 }, black: { before: 1500, after: 1500 } });
+    assert.deepEqual(ratings.forGame(rapid), { white: { before: 1500 }, black: { before: 1500 } });
+    assert.equal(ratings.rating(CLAUDE, "blitz"), 1516);
+    assert.equal(ratings.rating(CLAUDE, "bullet"), 1484);
+    assert.equal(ratings.rating(CLAUDE, "classical"), 1500);
+    const tables = ratings.tables();
+    assert.deepEqual(Object.keys(tables), ["bullet", "blitz", "rapid", "classical"]);
+    assert.deepEqual(
+      tables.bullet.map((m) => [m.category, m.model, m.rating]),
+      [
+        ["bullet", "gpt-test", 1516],
+        ["bullet", "claude-test", 1484],
+      ],
+    );
+    assert.deepEqual(tables.rapid, []);
+    assert.deepEqual(
+      tables.classical.map((m) => [m.model, m.draws]),
+      [
+        ["claude-test", 1],
+        ["gpt-test", 1],
+      ],
+    );
   });
 
   it("rates games in the order they ended", () => {
@@ -66,7 +111,7 @@ describe("Elo ratings", () => {
     assert.deepEqual(ratings.forGame(running), { white: { before: 1516 }, black: { before: 1484 } });
     assert.deepEqual(ratings.forGame(paused), { white: { before: 1484 }, black: { before: 1516 } });
     assert.deepEqual(
-      ratings.table().map((m) => [m.model, m.games]),
+      ratings.table("blitz").map((m) => [m.model, m.games]),
       [
         ["claude-test", 1],
         ["gpt-test", 1],

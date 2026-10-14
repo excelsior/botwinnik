@@ -1,4 +1,5 @@
 export type TimeCategory = "bullet" | "blitz" | "rapid" | "classical";
+export const TIME_CATEGORIES: readonly TimeCategory[] = ["bullet", "blitz", "rapid", "classical"];
 
 export interface TimeControl {
   baseMs: number;

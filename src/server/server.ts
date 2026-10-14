@@ -136,7 +136,7 @@ async function handle(
 
   // /api/ratings
   if (parts[1] === "ratings" && parts.length === 2 && method === "GET") {
-    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, models: service.ratings().table() });
+    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories: service.ratings().tables() });
   }
 
   if (parts[1] !== "games") throw new HttpError(404, "Not found");
