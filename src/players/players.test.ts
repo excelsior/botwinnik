@@ -249,7 +249,8 @@ describe("Gemini player", () => {
     const fake = fakeFetch([
       () =>
         geminiResponse({
-          candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(DECISION) }] }, finishReason: "STOP" }],
+          // A thought summary part, if one comes back, isn't part of the reply.
+          candidates: [{ content: { role: "model", parts: [{ text: "Considering e5...", thought: true }, { text: JSON.stringify(DECISION) }] }, finishReason: "STOP" }],
           usageMetadata: GEMINI_USAGE,
         }),
     ]);
