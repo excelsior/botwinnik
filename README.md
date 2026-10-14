@@ -17,6 +17,7 @@ ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
 npm install
 cp config.example.ini config.ini   # then add at least one API key
 npm start                          # http://127.0.0.1:3000/
+npm run dev                        # the same, restarting when the code or config.ini changes
 ```
 
 `config.ini` holds the API keys and is git-ignored. At least one key must be
@@ -76,8 +77,11 @@ or its row in the games list) starts a game between the same two models with
 the same time control, with the colors swapped, kept or drawn at random. The
 page only listens on this machine by default. After updating Botwinnik (say,
 with `git pull`), restart it; until then the home page shows a reminder,
-because the page updates on reload but the running server doesn't. A restart
-ends games in progress, and paused games are kept.
+because the page updates on reload but the running server doesn't.
+`npm run dev` restarts by itself whenever the code or `config.ini` changes
+(changes to `public/` show on a page reload). Games running when the app
+stops come back paused: resume one and the turn it stopped in starts over,
+with the time the player had at its start.
 
 **Eval bar:** next to the board, Stockfish evaluates the position shown. The
 engine (Stockfish 18 lite, single-threaded WebAssembly, in
@@ -91,7 +95,7 @@ Eval button or E; the choice is remembered in the browser.
 npm run botwinnik -- play --time 5+3 --white claude-opus-5-5 --black gpt-5.6-sol
 npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # random colors
 npm run botwinnik -- models   # the models each key can use
-npm run botwinnik -- resume <game-id>   # continue a game paused for lack of funds
+npm run botwinnik -- resume <game-id>   # continue a paused game
 npm run botwinnik -- list
 npm run botwinnik -- ratings   # each model's Elo ratings (or: ratings blitz)
 npm run botwinnik -- pgn <game-id> --out game.pgn
@@ -256,3 +260,19 @@ The repository started as a TypeScript project for a dev container with
 (`.devcontainer/init-firewall.sh`, allowing GitHub, npm, Anthropic and OpenAI
 among others). Open the folder in VS Code and run **Dev Containers: Reopen in
 Container**, or `devcontainer up --workspace-folder .`.
+
+To start Botwinnik with hot reload whenever the container starts, add
+`scripts/start-dev-server.sh` to the `postStartCommand` in
+`.devcontainer/devcontainer.json`, after the firewall script that already runs
+there, and forward the port:
+
+```jsonc
+"postStartCommand": "... && ${containerWorkspaceFolder}/scripts/start-dev-server.sh",
+"forwardPorts": [3000],
+```
+
+The script installs the dependencies if they're missing, then runs
+`npm run dev` in the background with its output in `dev-server.log`. Without a
+`config.ini` the server waits, and starts once the file is saved. For Gemini
+and Grok, the firewall also has to allow `generativelanguage.googleapis.com`
+and `api.x.ai`: add them to `ALLOWED_DOMAINS` in `init-firewall.sh`.

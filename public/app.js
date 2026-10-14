@@ -53,7 +53,7 @@ function setChildren(el, ...children) {
   el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
 }
 
-const RESTART = "restart it (Ctrl+C, then npm start). A restart ends games in progress; paused games are kept.";
+const RESTART = "restart it (Ctrl+C, then npm start; npm run dev restarts by itself). Games in progress pause and can be resumed.";
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {

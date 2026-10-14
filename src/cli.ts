@@ -25,7 +25,8 @@ const USAGE = `Usage:
       name gives it away (claude-..., gpt-..., gemini-..., grok-...).
 
   botwinnik resume <game-id>
-      Continue a game that paused because an API account ran out of funds.
+      Continue a paused game: one whose API account ran out of funds, or that was
+      running when the app stopped.
 
   botwinnik models
       List the models each API key can use.
@@ -124,7 +125,7 @@ async function main(argv: string[]): Promise<number> {
 
 function serve(config: AppConfig, service: GameService): Promise<number> {
   const interrupted = service.recoverInterrupted();
-  if (interrupted) console.log(`Marked ${interrupted} interrupted game(s) as aborted.`);
+  if (interrupted) console.log(`Paused ${interrupted} game(s) the app stopped in the middle of; resume them on their pages or with botwinnik resume <id>.`);
   const loopbackOnly = ["127.0.0.1", "localhost", "::1"].includes(config.host);
   const server = createServer(service, {
     providers: config.providers,

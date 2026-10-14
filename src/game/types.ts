@@ -86,7 +86,7 @@ export interface GameEvent {
   at: string;
 }
 
-/** "paused": stopped with the clocks frozen (an API account ran out of funds) until resumed. */
+/** "paused": stopped with the clocks frozen (an API account ran out of funds, or the app stopped) until resumed. */
 export type GameStatus = "running" | "paused" | "finished" | "aborted";
 
 export interface GameRecord {

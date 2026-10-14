@@ -4,7 +4,7 @@ import { createGameRecord, GameRunner, type GameOptions } from "./game.js";
 import { importPgn } from "./pgnImport.js";
 import { rateGames, type Ratings } from "./ratings.js";
 import { GameStore, summarize, type GameSummary } from "./store.js";
-import type { Color, GameRecord, PlayerSpec } from "./types.js";
+import { colorName, type Color, type GameRecord, type PlayerSpec } from "./types.js";
 
 export interface StartGameRequest {
   /** "5+3", "10+0"... */
@@ -47,9 +47,10 @@ export class GameService {
   ) {}
 
   /**
-   * Games left "running" on disk by a previous process can't continue; mark
-   * them aborted. Calls that process was still waiting for are lost. Paused
-   * games stay paused.
+   * Games left "running" on disk by a previous process (stopped, crashed or
+   * restarted by `npm run dev`) are paused, so they can be resumed. Calls that
+   * process was still waiting for are lost, and the turn it stopped in starts
+   * over with the time the player had at its start.
    */
   recoverInterrupted(): number {
     let count = 0;
@@ -60,7 +61,7 @@ export class GameService {
         this.store.save(game);
       }
       if (game.status !== "running") continue;
-      markAborted(game, "Interrupted: the app stopped while the game was running.");
+      markInterrupted(game);
       this.store.save(game);
       count++;
     }
@@ -195,4 +196,18 @@ function markAborted(game: GameRecord, message: string): void {
   game.termination = { reason: "aborted", winner: null, message };
   game.finishedAt = new Date().toISOString();
   delete game.turnStartedAt;
+}
+
+function markInterrupted(game: GameRecord): void {
+  const fen = game.moves.at(-1)?.fenAfter ?? game.startFen;
+  const color: Color = fen.split(" ")[1] === "b" ? "black" : "white";
+  game.status = "paused";
+  delete game.turnStartedAt;
+  game.events.push({
+    type: "paused",
+    color,
+    ply: game.moves.length,
+    message: `Paused: the app stopped during ${colorName(color)}'s turn. Resume the game to play on; that turn starts over with the time ${colorName(color)} had at its start.`,
+    at: new Date().toISOString(),
+  });
 }

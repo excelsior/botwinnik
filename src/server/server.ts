@@ -51,11 +51,11 @@ export interface ServerOptions {
   codeChanged?: () => boolean;
 }
 
-/** When the newest of the app's source files was last changed. */
+/** When the newest of the app's source files was last changed; tests and their helpers don't count. */
 export function newestSourceChange(dir = SRC_DIR): number {
   let newest = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+    if (!entry.isFile() || !entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts") || entry.name === "testing.ts") continue;
     try {
       newest = Math.max(newest, statSync(path.join(entry.parentPath, entry.name)).mtimeMs);
     } catch {
