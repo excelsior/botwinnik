@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, PROVIDERS, type AppConfig } from "./config.js";
 import { moveNumberOf } from "./game/game.js";
 import { toPgn } from "./game/pgn.js";
+import { K_FACTOR, START_RATING } from "./game/ratings.js";
 import { GameService } from "./game/service.js";
 import { gameSpend, GameStore } from "./game/store.js";
 import type { GameRecord } from "./game/types.js";
@@ -30,6 +31,10 @@ const USAGE = `Usage:
 
   botwinnik list
       List saved games.
+
+  botwinnik ratings
+      Show each model's Elo rating. Every model starts at ${START_RATING}, and each
+      finished game moves its players' ratings (K = ${K_FACTOR}).
 
   botwinnik pgn <game-id> [--out file.pgn]
       Export a saved game as PGN (printed, or written to --out).
@@ -92,13 +97,15 @@ async function main(argv: string[]): Promise<number> {
     case "pgn": {
       const game = service.get(rest[0] ?? "");
       if (!game) throw new ConfigError(`No saved game "${rest[0] ?? ""}". Run "botwinnik list" to see the IDs.`);
-      const pgn = toPgn(game);
+      const pgn = toPgn(game, service.ratings().forGame(game));
       if (values.out) {
         writeFileSync(values.out, pgn);
         console.log(`Wrote ${values.out}`);
       } else process.stdout.write(pgn);
       return 0;
     }
+    case "ratings":
+      return printRatings(service);
     case "import": {
       if (!rest[0]) throw new ConfigError("Give the PGN file to import: botwinnik import game.pgn");
       const game = service.importPgn(readFileSync(rest[0], "utf8"));
@@ -133,6 +140,21 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
       console.log(`Games are saved in ${config.gamesDir}`);
     });
   });
+}
+
+function printRatings(service: GameService): number {
+  const table = service.ratings().table();
+  if (!table.length) {
+    console.log(`No finished games yet. Every model starts at ${START_RATING}.`);
+    return 0;
+  }
+  const width = Math.max(...table.map((m) => m.model.length), "Model".length);
+  console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L`);
+  table.forEach((m, i) => {
+    const counts = [m.games, m.wins, m.draws, m.losses].map((n, j) => String(n).padStart(j ? 3 : 5)).join(" ");
+    console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}`);
+  });
+  return 0;
 }
 
 async function printModels(config: AppConfig): Promise<number> {
@@ -221,6 +243,15 @@ async function follow(service: GameService, game: GameRecord, printedMoves = 0, 
     );
   }
   console.log(`Total: ${formatUsd(gameSpend(final).costUsd)}`);
+  const ratings = service.ratings().forGame(final);
+  if (ratings) {
+    const change = (color: "white" | "black") => {
+      const { before, after = before } = ratings[color];
+      const delta = after - before;
+      return `${final[color].model} ${before} → ${after} (${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${Math.abs(delta)})`;
+    };
+    console.log(`Ratings: ${change("white")}, ${change("black")}`);
+  }
   console.log(`Saved as ${final.id}. Export with: botwinnik pgn ${final.id}`);
   return 0;
 }

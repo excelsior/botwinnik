@@ -5,7 +5,8 @@ control, the two models, optionally their colors), and Botwinnik asks each
 model for its moves, runs the clocks, enforces the rules, saves the game with
 the reasoning the models give for their moves, and exports it as PGN. Games
 can be imported from PGN too, and a game exported while paused can be resumed
-after importing it.
+after importing it. Each model has an Elo rating that moves with every
+finished game.
 
 ChatGPT (OpenAI API) and Claude (Anthropic API) are supported.
 
@@ -74,6 +75,7 @@ npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # 
 npm run botwinnik -- models   # the models each key can use
 npm run botwinnik -- resume <game-id>   # continue a game paused for lack of funds
 npm run botwinnik -- list
+npm run botwinnik -- ratings   # each model's Elo rating
 npm run botwinnik -- pgn <game-id> --out game.pgn
 npm run botwinnik -- import game.pgn   # a game without a result comes back paused
 ```
@@ -159,6 +161,24 @@ my-fine-tuned-model = 1.25, 10
 
 A model without a price still has its tokens counted, and its cost shows as
 unknown.
+
+## Ratings
+
+Every model has an Elo rating, starting at 1500. Each finished game moves its
+players' ratings by K × (score − expected score), with K = 32 and the expected
+score 1 / (1 + 10^((opponent − rating) / 400)), so a win against an equal
+model gains 16 points and the loser drops by the same amount. Games count in
+the order they ended. Aborted games and games between a model and itself
+don't count; a paused game counts once it is resumed and finished.
+
+The home page lists the ratings, and the game page shows each player's rating
+going into the game and, once it's over, the change. `botwinnik ratings`
+prints the same table, and PGN exports carry the ratings going into the game
+as `WhiteElo` and `BlackElo`.
+
+Ratings are worked out again from the saved games whenever they're needed,
+so they stay right when games are imported or game files are deleted. An
+imported game that is already over counts as of when it was imported.
 
 ## Saved games and PGN
 

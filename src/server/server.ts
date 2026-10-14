@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { PROVIDER_LABELS, PROVIDERS, type AppConfig, type Provider } from "../config.js";
 import { toPgn } from "../game/pgn.js";
 import { PgnImportError } from "../game/pgnImport.js";
+import { K_FACTOR, START_RATING, type GameRatings } from "../game/ratings.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
 import type { GameRecord } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
@@ -133,6 +134,11 @@ async function handle(
     return sendJson(res, 200, { providers, timeControls: TIME_CONTROL_PRESETS });
   }
 
+  // /api/ratings
+  if (parts[1] === "ratings" && parts.length === 2 && method === "GET") {
+    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, models: service.ratings().table() });
+  }
+
   if (parts[1] !== "games") throw new HttpError(404, "Not found");
 
   // /api/games/import
@@ -169,14 +175,14 @@ async function handle(
   const game = service.get(id);
   if (!game) throw new HttpError(404, `No game ${id}`);
 
-  if (parts.length === 3 && method === "GET") return sendJson(res, 200, withNow(game));
+  if (parts.length === 3 && method === "GET") return sendJson(res, 200, { ...withNow(game), ratings: service.ratings().forGame(game) });
 
   if (parts.length === 4 && parts[3] === "pgn" && method === "GET") {
     res.writeHead(200, {
       "Content-Type": "application/x-chess-pgn; charset=utf-8",
       "Content-Disposition": `attachment; filename="botwinnik-${game.id}.pgn"`,
     });
-    res.end(toPgn(game));
+    res.end(toPgn(game, service.ratings().forGame(game)));
     return;
   }
 
@@ -200,7 +206,16 @@ async function handle(
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
-    const send = (g: GameRecord) => res.write(`data: ${JSON.stringify(withNow(g))}\n\n`);
+    // Ratings only change when a game ends, so they are worked out again only when this game's status changes.
+    let ratings: GameRatings | null = null;
+    let ratedStatus: GameRecord["status"] | undefined;
+    const send = (g: GameRecord) => {
+      if (g.status !== ratedStatus) {
+        ratings = service.ratings().forGame(g);
+        ratedStatus = g.status;
+      }
+      res.write(`data: ${JSON.stringify({ ...withNow(g), ratings })}\n\n`);
+    };
     send(game);
     const unsubscribe = service.subscribe(id, send);
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 15_000);

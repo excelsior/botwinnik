@@ -246,13 +246,23 @@ describe("admin server", () => {
     assert.equal(game.white.model, "claude-test");
     assert.equal(game.colorsAssigned, "manual");
 
-    let final;
+    let final, ratings;
     for (let i = 0; i < 50; i++) {
-      final = (await (await fetch(`${base}/api/games/${game.id}`)).json()).game;
+      ({ game: final, ratings } = await (await fetch(`${base}/api/games/${game.id}`)).json());
       if (final.status !== "running") break;
       await new Promise((r) => setTimeout(r, 10));
     }
     assert.equal(final.result, "0-1");
+    assert.deepEqual(ratings, { white: { before: 1500, after: 1484 }, black: { before: 1500, after: 1516 } });
+    const table = await (await fetch(`${base}/api/ratings`)).json();
+    assert.equal(table.start, 1500);
+    assert.deepEqual(
+      table.models.map((m: { model: string; rating: number; wins: number }) => [m.model, m.rating, m.wins]),
+      [
+        ["gpt-test", 1516, 1],
+        ["claude-test", 1484, 0],
+      ],
+    );
 
     const events = await fetch(`${base}/api/games/${game.id}/events`);
     assert.equal(events.headers.get("content-type"), "text/event-stream");
@@ -260,11 +270,14 @@ describe("admin server", () => {
     const first = new TextDecoder().decode((await reader.read()).value);
     await reader.cancel();
     assert.match(first, /^data: \{"game":\{/);
+    assert.match(first, /"ratings":\{"white":\{"before":1500,"after":1484\}/);
 
     const pgn = await fetch(`${base}/api/games/${game.id}/pgn`);
     assert.equal(pgn.status, 200);
     assert.match(pgn.headers.get("content-disposition") ?? "", /attachment; filename="botwinnik-.*\.pgn"/);
-    assert.match(await pgn.text(), /\[Result "0-1"\]/);
+    const pgnText = await pgn.text();
+    assert.match(pgnText, /\[Result "0-1"\]/);
+    assert.match(pgnText, /\[WhiteElo "1500"\]\n\[BlackElo "1500"\]/);
 
     const list = await (await fetch(`${base}/api/games`)).json();
     const summary = list.find((g: { id: string }) => g.id === game.id);

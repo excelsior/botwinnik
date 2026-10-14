@@ -2,6 +2,7 @@ import { DEFAULT_POSITION } from "chess.js";
 import type { Spend } from "../pricing.js";
 import { pgnClock, pgnTimeControl } from "../timeControl.js";
 import { moveNumberOf } from "./game.js";
+import type { GameRatings } from "./ratings.js";
 import { colorName, type GameEvent, type GameRecord, type MoveRecord } from "./types.js";
 
 const PGN_TERMINATION: Record<string, string> = {
@@ -18,9 +19,10 @@ const PGN_TERMINATION: Record<string, string> = {
  * the player's reasoning; illegal moves, draw offers and other events appear
  * as comments where they happened. The extra tags and [%...] commands carry
  * everything importPgn needs to restore the game, so a paused game can be
- * exported, imported elsewhere and resumed.
+ * exported, imported elsewhere and resumed. With `ratings`, WhiteElo and
+ * BlackElo give the players' ratings going into the game.
  */
-export function toPgn(game: GameRecord): string {
+export function toPgn(game: GameRecord, ratings?: GameRatings | null): string {
   const date = new Date(game.createdAt);
   const tags: [string, string][] = [
     ["Event", "Botwinnik AI match"],
@@ -30,6 +32,7 @@ export function toPgn(game: GameRecord): string {
     ["White", game.white.model],
     ["Black", game.black.model],
     ["Result", game.result],
+    ...(ratings ? ([["WhiteElo", String(ratings.white.before)], ["BlackElo", String(ratings.black.before)]] as [string, string][]) : []),
     ["WhiteType", "program"],
     ["BlackType", "program"],
     ["TimeControl", pgnTimeControl(game.timeControl)],

@@ -137,15 +137,30 @@ async function showHome() {
     app.replaceChildren(h("p", { class: "error" }, err.message));
     return;
   }
+  const ratingsSection = h("section", { class: "card" }, h("h2", {}, "Ratings"), h("p", { class: "muted" }, "Loading…"));
   const gamesSection = h("section", { class: "card" }, h("h2", {}, "Games"), h("p", { class: "muted" }, "Loading…"));
-  app.replaceChildren(h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), gamesSection));
+  app.replaceChildren(
+    h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), h("div", { class: "home-main" }, ratingsSection, gamesSection)),
+  );
 
+  let ratedGames = null; // the finished games the ratings shown were worked out from
   const refresh = async () => {
+    let games;
     try {
-      const games = await api("/games");
+      games = await api("/games");
       gamesSection.replaceChildren(h("h2", {}, "Games"), gamesTable(games));
     } catch (err) {
       gamesSection.replaceChildren(h("h2", {}, "Games"), h("p", { class: "error" }, err.message));
+      return;
+    }
+    // Ratings only change when a game finishes.
+    const finished = games.filter((g) => g.status === "finished").map((g) => g.id).join();
+    if (finished === ratedGames) return;
+    try {
+      ratingsSection.replaceChildren(h("h2", {}, "Ratings"), ratingsTable(await api("/ratings")));
+      ratedGames = finished;
+    } catch (err) {
+      ratingsSection.replaceChildren(h("h2", {}, "Ratings"), h("p", { class: "error" }, err.message));
     }
   };
   await refresh();
@@ -425,6 +440,56 @@ function importForm() {
   );
 }
 
+function ratingsTable({ start, k, models }) {
+  if (!models.length) return h("p", { class: "muted" }, `No rated games yet. Every model starts at ${start}.`);
+  const num = (value) => h("td", { class: "num" }, value);
+  return h(
+    "div",
+    {},
+    h(
+      "div",
+      { class: "table-wrap" },
+      h(
+        "table",
+        { class: "ratings" },
+        h(
+          "thead",
+          {},
+          h(
+            "tr",
+            {},
+            h("th", { class: "num" }, "#"),
+            h("th", {}, "Model"),
+            ["Rating", "Games", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
+          ),
+        ),
+        h(
+          "tbody",
+          {},
+          models.map((m, i) =>
+            h(
+              "tr",
+              {},
+              num(i + 1),
+              h("td", { title: m.provider === "anthropic" ? "Claude" : "ChatGPT" }, m.model),
+              h("td", { class: "num rating-cell" }, m.rating),
+              num(m.games),
+              num(m.wins),
+              num(m.draws),
+              num(m.losses),
+            ),
+          ),
+        ),
+      ),
+    ),
+    h(
+      "p",
+      { class: "muted note" },
+      `Elo ratings from finished games, in the order they ended. Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
+    ),
+  );
+}
+
 function gamesTable(games) {
   if (!games.length) return h("p", { class: "muted" }, "No games yet. Start one on the left.");
   return h(
@@ -571,6 +636,7 @@ function showGame(id) {
   let fresh = null; // the move that just arrived, flashed for a moment: { ply, at }
   let evaluation = null;
   let evalOn = loadSetting(EVAL_SETTING, "on") !== "off";
+  let ratings = null; // { white: { before, after? }, black: ... }, or null for an unrated game
 
   const boardEl = h("div", { class: "board", role: "img" });
   const evalFill = h("div", { class: "eval-fill" });
@@ -596,6 +662,7 @@ function showGame(id) {
     offset = Date.parse(data.serverNow) - Date.now();
     const first = !game;
     game = data.game;
+    ratings = data.ratings ?? null;
     if (viewPly !== null && viewPly > game.moves.length) viewPly = null;
     if (first) {
       app.replaceChildren(view);
@@ -705,6 +772,18 @@ function showGame(id) {
     return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
   }
 
+  /** The rating going into the game, and what the game did to it once it's over. */
+  function ratingTag({ before, after }) {
+    if (after === undefined) return h("span", { class: "rating", title: "Elo rating" }, String(before));
+    const delta = after - before;
+    return h(
+      "span",
+      { class: "rating", title: `Elo rating: ${before} before this game, ${after} after it` },
+      String(before),
+      h("span", { class: `rating-change${delta > 0 ? " up" : delta < 0 ? " down" : ""}` }, delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : "±0"),
+    );
+  }
+
   function spendBadge(spend) {
     if (!spend) return null;
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
@@ -741,6 +820,7 @@ function showGame(id) {
           { class: "who-line" },
           h("span", { class: `swatch ${color}`, title: capitalize(color) }),
           h("span", { class: "name" }, spec.model),
+          ratings ? ratingTag(ratings[color]) : null,
           h("span", { class: "muted provider" }, spec.provider === "anthropic" ? "Claude" : "ChatGPT"),
           spendBadge(game.spend?.[color]),
           illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,

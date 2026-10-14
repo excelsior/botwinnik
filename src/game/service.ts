@@ -2,6 +2,7 @@ import { parseTimeControl } from "../timeControl.js";
 import type { PlayerFactory } from "../players/llmPlayer.js";
 import { createGameRecord, GameRunner, type GameOptions } from "./game.js";
 import { importPgn } from "./pgnImport.js";
+import { rateGames, type Ratings } from "./ratings.js";
 import { GameStore, summarize, type GameSummary } from "./store.js";
 import type { Color, GameRecord, PlayerSpec } from "./types.js";
 
@@ -131,7 +132,16 @@ export class GameService {
   }
 
   list(): GameSummary[] {
-    return this.store.list().map((g) => summarize(this.running.get(g.id)?.runner.record ?? g));
+    return this.games().map(summarize);
+  }
+
+  /** Every model's Elo rating, worked out from the saved games (including ones other processes saved). */
+  ratings(): Ratings {
+    return rateGames(this.games());
+  }
+
+  private games(): GameRecord[] {
+    return this.store.list().map((g) => this.running.get(g.id)?.runner.record ?? g);
   }
 
   /** Stops a running or paused game without a result. */

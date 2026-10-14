@@ -131,6 +131,13 @@ h3 {
   }
 }
 
+.home-main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
 .home-side {
   display: flex;
   flex-direction: column;
@@ -411,23 +418,47 @@ button.danger {
   overflow-x: auto;
 }
 
-table.games {
+table.games,
+table.ratings {
   width: 100%;
   border-collapse: collapse;
 }
 
 table.games th,
-table.games td {
+table.games td,
+table.ratings th,
+table.ratings td {
   text-align: left;
   padding: 8px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
-table.games th {
+table.games th,
+table.ratings th {
   font-size: 13px;
   color: var(--muted);
   font-weight: 600;
+}
+
+table.ratings .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.ratings th:first-child,
+table.ratings td:first-child {
+  width: 1%;
+  color: var(--muted);
+}
+
+table.ratings .rating-cell {
+  font-weight: 600;
+}
+
+.note {
+  margin: 12px 0 0;
+  font-size: 13px;
 }
 
 table.games tbody tr {
@@ -682,6 +713,33 @@ table.games tbody tr:hover {
 
 .player-bar .provider {
   font-size: 13px;
+}
+
+/* On phones the model name needs the room more; it gives the provider away anyway. */
+@media (max-width: 520px) {
+  .player-bar .provider {
+    display: none;
+  }
+}
+
+.rating {
+  flex: none;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rating-change {
+  margin-left: 4px;
+  font-weight: 600;
+}
+
+.rating-change.up {
+  color: var(--accent);
+}
+
+.rating-change.down {
+  color: var(--danger);
 }
 
 .swatch {

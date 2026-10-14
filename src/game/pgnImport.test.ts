@@ -51,7 +51,10 @@ describe("PGN import", () => {
       [{ invalid: "no JSON" }, { move: "e5", think: 700 }, { move: "Qh4#", reasoning: "Mate." }],
     );
     assert.equal(game.result, "0-1");
-    const imported = importPgn(toPgn(game), sameId);
+    const pgn = toPgn(game, { white: { before: 1532, after: 1515 }, black: { before: 1490, after: 1507 } });
+    assert.match(pgn, /^\[WhiteElo "1532"\]\n\[BlackElo "1490"\]$/m);
+    // Ratings come from the games themselves, so the import leaves the Elo tags aside.
+    const imported = importPgn(pgn, sameId);
     // Braces can't appear in PGN comments; everything else comes back as it was.
     game.moves[0].reasoning = "A (dubious) start.";
     assert.deepEqual(withoutTimestamps(imported), withoutTimestamps(game));
