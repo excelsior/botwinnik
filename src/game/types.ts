@@ -160,6 +160,8 @@ export interface TurnInfo {
   timeControl: GameRecord["timeControl"];
   myClockMs: number;
   opponentClockMs: number;
+  /** How long this player took over its previous move, if it has made one. */
+  myLastMoveMs?: number;
   /** The opponent has offered a draw that can be accepted now. */
   drawOffered: boolean;
   /** This player may attach a draw offer to its move. */

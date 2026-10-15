@@ -4,8 +4,10 @@ import { Chess } from "chess.js";
 import { ConfigError, configFromIni, parseIni, parsePlayerSpec } from "./config.js";
 import { formatMoveList, hasOnlyKing, resolveMove } from "./game/moves.js";
 import {
+  describeRoughly,
   formatClock,
   illegalMoveBonusMs,
+  moveTimeBudgetMs,
   parseTimeControl,
   pgnClock,
   pgnTimeControl,
@@ -60,6 +62,16 @@ describe("time controls", () => {
     assert.equal(formatClock(7_350), "0:07.3");
     assert.equal(formatClock(-5), "0:00.0");
     assert.equal(pgnClock(301_400), "0:05:01");
+  });
+
+  it("suggests a time for each move", () => {
+    assert.equal(Math.round(moveTimeBudgetMs(300_000, 3_000, 1)), 11_696); // 5:00 over 34.5 moves, plus 3s
+    assert.equal(moveTimeBudgetMs(5_400_000, 30_000, 70), 570_000); // at least 10 moves to go
+    assert.equal(moveTimeBudgetMs(4_000, 3_000, 40), 2_000); // never more than half the time left
+    assert.equal(moveTimeBudgetMs(-10, 0, 1), 0);
+    assert.equal(describeRoughly(11_696), "12 seconds");
+    assert.equal(describeRoughly(200), "1 second");
+    assert.equal(describeRoughly(186_000), "3 minutes");
   });
 });
 

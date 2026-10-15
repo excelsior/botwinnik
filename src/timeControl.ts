@@ -53,6 +53,16 @@ export function timeCategory(tc: TimeControl): TimeCategory {
   return "classical";
 }
 
+/**
+ * A rough time to spend on the next move: the time left spread over the moves
+ * the game is still likely to last (35 at the start, never fewer than 10),
+ * plus the increment, and never more than half the time left.
+ */
+export function moveTimeBudgetMs(remainingMs: number, incrementMs: number, moveNumber: number): number {
+  const movesToGo = Math.max(10, 35 - moveNumber / 2);
+  return Math.max(0, Math.min(remainingMs / movesToGo + incrementMs, remainingMs / 2));
+}
+
 /** Extra time the opponent receives after a player's first illegal move. */
 export function illegalMoveBonusMs(tc: TimeControl): number {
   return timeCategory(tc) === "classical" ? 2 * MINUTE : 1 * MINUTE;
@@ -80,6 +90,13 @@ export function pgnClock(ms: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** A rounded duration for prompts: "12 seconds", or whole minutes from 90 seconds on ("3 minutes"). */
+export function describeRoughly(ms: number): string {
+  const s = Math.max(1, Math.round(ms / SECOND));
+  if (s < 90) return `${s} second${s === 1 ? "" : "s"}`;
+  return `${Math.round(s / 60)} minutes`;
 }
 
 /** "1 minute", "2 minutes", "30 seconds". */

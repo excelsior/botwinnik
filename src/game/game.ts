@@ -438,6 +438,7 @@ export class GameRunner {
 
   private turnInfo(color: Color, remainingMs: number, feedback: string | undefined): TurnInfo {
     const own = this.record.moves.filter((m) => m.color === color && m.reasoning);
+    const lastMove = this.record.moves.filter((m) => m.color === color).at(-1);
     return {
       color,
       fen: this.chess.fen(),
@@ -448,6 +449,7 @@ export class GameRunner {
       timeControl: this.record.timeControl,
       myClockMs: Math.max(0, remainingMs),
       opponentClockMs: this.record.clocks[opponent(color)],
+      ...(lastMove ? { myLastMoveMs: lastMove.thinkingMs } : {}),
       drawOffered: this.record.pendingDrawOffer === opponent(color),
       canOfferDraw: this.record.lastDrawOfferBy !== color,
       illegalMovesSoFar: this.record.illegalMoves[color],

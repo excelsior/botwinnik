@@ -133,6 +133,14 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
   so far, both clocks, any pending draw offer, whether they may offer a draw,
   their illegal-move count, and their own last few explanations. They do not
   get a list of legal moves, and never see the opponent's reasoning.
+- **Time management:** the prompt tells players that the clock is part of the
+  game, to play routine moves fast and keep time for critical positions. Each
+  turn says how long their previous move took and suggests a time for this
+  one: the time left spread over the moves still likely to come (35 at the
+  start, never fewer than 10), plus the increment. Under a minute (or a fifth
+  of the base time, if less), they are told they are low on time. A model
+  that still thinks too long may do better with a lower `effort` in
+  `config.ini`.
 - **API errors:** temporary ones (rate limits, overload, network) are retried
   on the player's clock. Errors that retrying can't fix (bad key, unknown
   model) abort the game without a result.
