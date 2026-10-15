@@ -1315,11 +1315,22 @@ function showGame(id) {
     );
   }
 
+  /** How hard the player is set to think, once the game knows. */
+  function effortTag(color) {
+    const effort = game.effort?.[color];
+    if (effort === undefined) return null;
+    if (effort === null) {
+      return h("span", { class: "effort", title: "No effort level is sent, so the model thinks as much as it does by default" }, "default effort");
+    }
+    return h("span", { class: "effort", title: `Reasoning effort: ${effort}, set by the time control` }, `${effort} effort`);
+  }
+
   function spendBadge(spend) {
     if (!spend) return null;
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
   }
 
+  /** Under the name: the player's effort, then the pieces it has captured. */
   function materialRow(color, material) {
     const taken = material.captured[color];
     const lead = color === "white" ? material.diff : -material.diff;
@@ -1331,6 +1342,7 @@ function showGame(id) {
     return h(
       "div",
       { class: "material", title: taken.length ? `Captured: ${names}` : "" },
+      effortTag(color),
       groups,
       lead > 0 ? h("span", { class: "lead" }, `+${lead}`) : null,
     );

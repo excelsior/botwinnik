@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseTimeControl, type TimeControl } from "../timeControl.js";
+import { parseTimeControl, type TimeCategory, type TimeControl } from "../timeControl.js";
 import { callSpend, CLAUDE, FakeClock, GPT, ScriptedPlayer, type Step } from "../testing.js";
 import type { Spend } from "../pricing.js";
 import { createGameRecord, GameRunner, moveNumberOf, type GameOptions } from "./game.js";
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "./types.js";
+import { FatalPlayerError, OutOfFundsError, TransientPlayerError, type Player, type PlayerReply, type PlayerSpec, type TurnInfo } from "./types.js";
 
 function setup(
   whiteSteps: Step[],
@@ -434,5 +434,43 @@ describe("costs", () => {
     await runner.callsFinished();
     assert.equal(record.unfinishedCall, undefined);
     assert.equal(record.spend.white.calls, 0);
+  });
+});
+
+/** Plays the given moves at once, saying which effort it plans and which its replies went out with. */
+class EffortPlayer implements Player {
+  readonly categories: TimeCategory[] = [];
+  constructor(
+    readonly spec: PlayerSpec,
+    private readonly moves: string[],
+    private readonly planned: string | null,
+    private readonly used: string | null,
+  ) {}
+  effortFor(category: TimeCategory): string | null {
+    this.categories.push(category);
+    return this.planned;
+  }
+  async decide(_turn: TurnInfo): Promise<PlayerReply> {
+    const move = this.moves.shift()!;
+    return { ok: true, decision: { action: "move", move, offerDraw: false, reasoning: "" }, effort: this.used };
+  }
+}
+
+describe("reasoning effort", () => {
+  it("keeps the effort each player plans, then the one its replies went out with", async () => {
+    const record = createGameRecord({ id: "test", timeControl: parseTimeControl("5+3"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+    const white = new EffortPlayer(CLAUDE, ["f3", "g4"], "max", "high");
+    const black = new EffortPlayer(GPT, ["e5", "Qh4#"], null, null);
+    const runner = new GameRunner(record, { white, black });
+    assert.deepEqual(record.effort, { white: "max", black: null });
+    assert.deepEqual(white.categories, ["blitz"]);
+    await runner.run();
+    assert.deepEqual(record.effort, { white: "high", black: null });
+  });
+
+  it("keeps none for players without one", async () => {
+    const { runner, record } = setup(["f3", "g4"], ["e5", "Qh4#"]);
+    await runner.run();
+    assert.equal(record.effort, undefined);
   });
 });

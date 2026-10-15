@@ -124,6 +124,11 @@ export class GameRunner {
     this.notesInPrompt = options.notesInPrompt ?? 3;
     this.chess = new Chess(record.startFen);
     for (const move of record.moves) this.chess.move(move.uci);
+    // The effort each player will ask for, until its first reply says which it got.
+    for (const color of ["white", "black"] as const) {
+      const effort = players[color].effortFor?.(record.timeControl.category);
+      if (effort !== undefined) record.effort = { ...record.effort, [color]: effort };
+    }
   }
 
   get sideToMove(): Color {
@@ -216,6 +221,7 @@ export class GameRunner {
         turnSpend = addSpend(turnSpend, reply.spend);
         this.record.spend[color] = addSpend(this.record.spend[color], reply.spend);
       }
+      if (reply.effort !== undefined) this.record.effort = { ...this.record.effort, [color]: reply.effort };
       if (remaining() <= 0) return this.flag(color);
 
       const rejectReply = (reason: string): boolean => {

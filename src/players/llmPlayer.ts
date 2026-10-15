@@ -47,29 +47,41 @@ export class LlmPlayer implements Player {
   ) {}
 
   async decide(turn: TurnInfo): Promise<PlayerReply> {
-    const response = await this.complete(
+    const { response, effort } = await this.complete(
       { system: systemPrompt(turn.color, turn.timeControl), user: turnPrompt(turn) },
       turn.timeControl.category,
     );
     const spend = spendOf(response.usage, this.price);
-    if ("problem" in response) return { ok: false, error: response.problem, spend };
-    return { ...parseDecision(response.text), spend };
+    if ("problem" in response) return { ok: false, error: response.problem, spend, effort };
+    return { ...parseDecision(response.text), spend, effort };
+  }
+
+  effortFor(category: TimeCategory): string | null {
+    return this.candidates(category)[0] ?? null;
   }
 
   /** Asks at the category's effort, stepping down a level each time the model turns one down. */
-  private async complete(request: ModelRequest, category: TimeCategory): Promise<ModelResponse> {
-    const key = `${this.spec.provider}:${this.spec.model}`;
-    const rejected = this.rejected.get(key) ?? new Set<string>();
-    for (const effort of effortCandidates(this.spec.provider, this.effort[category], rejected)) {
+  private async complete(request: ModelRequest, category: TimeCategory): Promise<{ response: ModelResponse; effort: string | null }> {
+    for (const effort of this.candidates(category)) {
       try {
-        return await this.model.complete({ ...request, effort });
+        return { response: await this.model.complete({ ...request, effort }), effort };
       } catch (err) {
         if (!(err instanceof EffortRejectedError)) throw err;
         // Turned down before any thinking: asking again costs little time and nothing is billed.
-        this.rejected.set(key, rejected.add(effort));
+        const key = this.key();
+        this.rejected.set(key, (this.rejected.get(key) ?? new Set()).add(effort));
       }
     }
-    return this.model.complete(request);
+    return { response: await this.model.complete(request), effort: null };
+  }
+
+  /** The levels to try for the category, leaving out the ones this model turned down. */
+  private candidates(category: TimeCategory): string[] {
+    return effortCandidates(this.spec.provider, this.effort[category], this.rejected.get(this.key()));
+  }
+
+  private key(): string {
+    return `${this.spec.provider}:${this.spec.model}`;
   }
 }
 

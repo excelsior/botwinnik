@@ -101,6 +101,7 @@ describe("Claude player", () => {
       decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
       // 10 input tokens at $4/M and 20 output tokens at $20/M.
       spend: { calls: 1, inputTokens: 10, cachedInputTokens: 0, outputTokens: 20, costUsd: (10 * 4 + 20 * 20) / 1e6 },
+      effort: "medium",
     });
     const { url, body } = fake.requests[0];
     assert.match(url, /\/v1\/messages$/);
@@ -188,6 +189,7 @@ describe("ChatGPT player", () => {
         outputTokens: 400,
         costUsd: (476 * 5 + 1024 * 0.5 + 400 * 30) / 1e6,
       },
+      effort: "xhigh",
     });
     const { url, body } = fake.requests[0];
     assert.match(url, /\/responses$/);
@@ -263,6 +265,7 @@ describe("Gemini player", () => {
       decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
       // 200 fresh input tokens, 1000 cached, and 80 reply + 500 thinking tokens of output.
       spend: { calls: 1, inputTokens: 1200, cachedInputTokens: 1000, outputTokens: 580, costUsd: (200 * 0.75 + 1000 * 0.075 + 580 * 3.75) / 1e6 },
+      effort: "medium",
     });
     const { url, body, headers } = fake.requests[0];
     assert.equal(url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
@@ -383,6 +386,7 @@ describe("Grok player", () => {
       decision: { action: "resign", move: null, offerDraw: false, reasoning: "Fighting for the center." },
       // 276 fresh input tokens, 1024 cached, and 60 reply + 400 reasoning tokens of output.
       spend: { calls: 1, inputTokens: 1300, cachedInputTokens: 1024, outputTokens: 460, costUsd: (276 * 2 + 1024 * 0.5 + 460 * 6) / 1e6 },
+      effort: "high",
     });
     const { url, body, headers } = fake.requests[0];
     assert.equal(url, "https://api.x.ai/v1/chat/completions");
@@ -460,8 +464,12 @@ describe("reasoning effort", () => {
     const model = new PickyModel(["low", "medium", "high"]);
     const rejected = new Map<string, Set<string>>();
     const first = new LlmPlayer({ provider: "anthropic", model: "claude-x" }, model, undefined, undefined, rejected);
-    assert.equal((await first.decide(turn("90+30"))).ok, true);
+    assert.equal(first.effortFor("classical"), "max");
+    const reply = await first.decide(turn("90+30"));
+    assert.equal(reply.ok, true);
+    assert.equal(reply.effort, "high", "the level the reply was given at");
     assert.deepEqual(model.asked, ["max", "xhigh", "high"]);
+    assert.equal(first.effortFor("classical"), "high");
     // Another game with the same model goes straight to it.
     const second = new LlmPlayer({ provider: "anthropic", model: "claude-x" }, model, undefined, undefined, rejected);
     await second.decide(turn("90+30"));
@@ -471,9 +479,10 @@ describe("reasoning effort", () => {
   it("plays at the model's default when it takes no level at all, or none is set", async () => {
     const model = new PickyModel([]);
     const player = new LlmPlayer({ provider: "xai", model: "grok-x" }, model);
-    await player.decide(turn("3+2"));
+    assert.equal((await player.decide(turn("3+2"))).effort, null);
     await player.decide(turn("3+2"));
     assert.deepEqual(model.asked, ["medium", "low", undefined, undefined]);
+    assert.equal(player.effortFor("blitz"), null);
     const unset = new PickyModel([]);
     const effort = { bullet: undefined, blitz: undefined, rapid: undefined, classical: undefined };
     await new LlmPlayer({ provider: "xai", model: "grok-x" }, unset, undefined, effort).decide(turn("3+2"));

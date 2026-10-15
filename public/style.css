@@ -757,6 +757,17 @@ table.games tbody tr:hover {
   font-size: 13px;
 }
 
+.player-bar .effort {
+  flex: none;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--muted);
+}
+
 /* On phones the model name needs the room more; it gives the provider away anyway. */
 @media (max-width: 520px) {
   .player-bar .provider {

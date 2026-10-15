@@ -130,6 +130,12 @@ export interface GameRecord {
   termination: Termination | null;
   /** Set for a game played in a tournament. */
   tournament?: TournamentGame;
+  /**
+   * The reasoning effort each player's requests go out with (null: the
+   * model's own default), the one it asks for first until it has replied.
+   * Absent for players without one, and for games from before it was kept.
+   */
+  effort?: Partial<Record<Color, string | null>>;
 }
 
 /** The tournament a game belongs to. */
@@ -180,11 +186,15 @@ export type PlayerReply = (
 ) & {
   /** What the request used and cost, when known. */
   spend?: Spend;
+  /** The reasoning effort the request went out with; null for the model's default. */
+  effort?: string | null;
 };
 
 export interface Player {
   readonly spec: PlayerSpec;
   decide(turn: TurnInfo): Promise<PlayerReply>;
+  /** The reasoning effort it will ask for first in games of this category; null for the model's default. */
+  effortFor?(category: TimeCategory): string | null;
 }
 
 /** An API failure that retrying won't fix (bad key, unknown model...). The game is aborted. */

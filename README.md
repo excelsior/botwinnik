@@ -83,6 +83,8 @@ elsewhere.
 
 **Web page** (`npm start`): start a game and watch it live with the board,
 both clocks, the material each side has captured and each move's reasoning.
+Under each player's name is the reasoning effort its moves are asked at
+("default effort" when none is sent; see `effort` under Setup).
 The page fits the window: the board takes the height it has, and the move list
 scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
