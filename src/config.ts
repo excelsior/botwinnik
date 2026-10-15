@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { parseEffort, type EffortByCategory } from "./players/effort.js";
 import type { ModelPrice } from "./pricing.js";
 
 export const PROVIDERS = ["openai", "anthropic", "google", "xai"] as const;
@@ -16,8 +17,8 @@ export interface ProviderConfig {
   apiKey: string;
   /** Models suggested in the setup form. Any other model ID can still be used. */
   models: string[];
-  /** Optional reasoning effort sent with every request; undefined means the model's default. */
-  effort?: string;
+  /** Reasoning effort for each time category; undefined leaves it to the model's default. */
+  effort: EffortByCategory;
 }
 
 export interface AppConfig {
@@ -87,7 +88,7 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     providers[provider] = {
       apiKey,
       models: models.length ? models : DEFAULT_MODELS[provider],
-      effort: section.effort?.trim() || undefined,
+      effort: effortSetting(provider, section.effort),
     };
   }
   if (Object.keys(providers).length === 0) {
@@ -107,6 +108,14 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     gamesDir: path.resolve(baseDir, app.games_dir?.trim() || "games"),
     prices: parsePrices(ini.prices ?? {}),
   };
+}
+
+function effortSetting(provider: Provider, value: string | undefined): EffortByCategory {
+  try {
+    return parseEffort(provider, value);
+  } catch (err) {
+    throw new ConfigError(`[${provider}] effort: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** `model = input, output[, cached input]`, in USD per million tokens. */

@@ -33,7 +33,7 @@ example Claude vs Claude). Keys come from
 [openai]
 api_key = sk-...
 models = gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna   ; listed first in the setup form
-effort =                                           ; optional reasoning effort
+effort =                                           ; by time category, see below
 
 [anthropic]
 api_key = sk-ant-...
@@ -55,6 +55,21 @@ host = 127.0.0.1
 port = 3000
 games_dir = games
 ```
+
+`effort` sets how hard the models think, by the game's time category. Left
+empty, it is `low` for bullet, `medium` for blitz, `high` for rapid and `max`
+for classical, so the faster the game, the faster the moves. `max` means the
+highest level the API has (OpenAI's `xhigh`, Gemini's and Grok's `high`). One
+level (say `effort = low`) applies to every game; four, comma-separated, set
+bullet, blitz, rapid and classical (`effort = low, low, medium, high`), and
+`default` leaves a category to the model's own default. The levels are each
+API's own: `none`, `minimal`, `low`, `medium`, `high` and `xhigh` for OpenAI;
+`low`, `medium`, `high`, `xhigh` and `max` for Claude; `minimal`, `low`,
+`medium` and `high` for Gemini 3 and later (Gemini 2.5 ignores it); `low`,
+`medium` and `high` for Grok. Not every model takes every level: when the API
+turns one down, the player asks again a level lower, down to `low`, and then
+with no effort at all. Each model's turned-down levels are remembered until
+the app restarts, so that costs a quick extra request once.
 
 The setup form suggests every model each key can use, fetched from the
 provider's API (OpenAI's, Google's and xAI's lists are narrowed to chat models
@@ -138,9 +153,8 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
   turn says how long their previous move took and suggests a time for this
   one: the time left spread over the moves still likely to come (35 at the
   start, never fewer than 10), plus the increment. Under a minute (or a fifth
-  of the base time, if less), they are told they are low on time. A model
-  that still thinks too long may do better with a lower `effort` in
-  `config.ini`.
+  of the base time, if less), they are told they are low on time. How hard
+  they think also follows the time category (see `effort` under Setup).
 - **API errors:** temporary ones (rate limits, overload, network) are retried
   on the player's clock. Errors that retrying can't fix (bad key, unknown
   model) abort the game without a result.

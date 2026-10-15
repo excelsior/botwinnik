@@ -133,7 +133,8 @@ describe("config", () => {
     );
     const gemini = configFromIni(parseIni("[google]\napi_key = AIza-test\n[xai]\napi_key = xai-test\neffort = low\n"));
     assert.deepEqual(Object.keys(gemini.providers), ["google", "xai"]);
-    assert.equal(gemini.providers.xai!.effort, "low");
+    assert.deepEqual(gemini.providers.xai!.effort, { bullet: "low", blitz: "low", rapid: "low", classical: "low" });
+    assert.deepEqual(gemini.providers.google!.effort, { bullet: "low", blitz: "medium", rapid: "high", classical: "max" }, "the built-in levels");
     const config = configFromIni(parseIni("[anthropic]\napi_key = sk-ant\n"), "/srv");
     assert.deepEqual(Object.keys(config.providers), ["anthropic"]);
     assert.ok(config.providers.anthropic!.models.length > 0, "default models are filled in");
@@ -146,11 +147,24 @@ describe("config", () => {
     const config = configFromIni(
       parseIni("[openai]\napi_key=k\nmodels=gpt-x, gpt-y\neffort=low\n[app]\nhost=0.0.0.0\nport=8080\ngames_dir=/data/games\n"),
     );
-    assert.deepEqual(config.providers.openai, { apiKey: "k", models: ["gpt-x", "gpt-y"], effort: "low" });
+    assert.deepEqual(config.providers.openai, {
+      apiKey: "k",
+      models: ["gpt-x", "gpt-y"],
+      effort: { bullet: "low", blitz: "low", rapid: "low", classical: "low" },
+    });
     assert.equal(config.host, "0.0.0.0");
     assert.equal(config.port, 8080);
     assert.equal(config.gamesDir, "/data/games");
     assert.throws(() => configFromIni(parseIni("[openai]\napi_key=k\n[app]\nport=abc\n")), /port/);
+  });
+
+  it("reads effort by time category", () => {
+    const effort = (value: string, provider = "anthropic") =>
+      configFromIni(parseIni(`[${provider}]\napi_key = k\neffort = ${value}\n`)).providers[provider as "anthropic"]!.effort;
+    assert.deepEqual(effort("minimal, Low, default, xhigh", "openai"), { bullet: "minimal", blitz: "low", rapid: undefined, classical: "xhigh" });
+    assert.deepEqual(effort("default"), { bullet: undefined, blitz: undefined, rapid: undefined, classical: undefined });
+    assert.throws(() => effort("low, high"), /\[anthropic\] effort: expected one level, or four \(for bullet, blitz, rapid, classical\)/);
+    assert.throws(() => effort("minimal"), /"minimal" isn't a level; use low, medium, high, xhigh, max, default/);
   });
 
   it("parses player specs", () => {

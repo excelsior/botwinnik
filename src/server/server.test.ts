@@ -9,12 +9,13 @@ import { GameStore } from "../game/store.js";
 import { createGameRecord } from "../game/game.js";
 import { OutOfFundsError, type PlayerSpec } from "../game/types.js";
 import { callSpend, CLAUDE, FoolsMatePlayer, GPT, ScriptedPlayer } from "../testing.js";
+import { DEFAULT_EFFORT } from "../players/effort.js";
 import { parseTimeControl } from "../timeControl.js";
 import { createServer, newestSourceChange } from "./server.js";
 
 const providers = {
-  anthropic: { apiKey: "k", models: ["claude-test"] },
-  openai: { apiKey: "k", models: ["gpt-test"] },
+  anthropic: { apiKey: "k", models: ["claude-test"], effort: DEFAULT_EFFORT },
+  openai: { apiKey: "k", models: ["gpt-test"], effort: DEFAULT_EFFORT },
 };
 
 /** While set, OpenAI players fail as if their account had run out of funds. */

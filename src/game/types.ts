@@ -193,5 +193,8 @@ export class FatalPlayerError extends Error {}
 /** The API account has no funds left. The game is paused so it can be resumed after topping up. */
 export class OutOfFundsError extends FatalPlayerError {}
 
+/** The model doesn't take the reasoning effort asked for. The player asks again with a lower one, or none. */
+export class EffortRejectedError extends FatalPlayerError {}
+
 /** A failure that may go away on retry (rate limit, overload, network). Retried on the player's clock. */
 export class TransientPlayerError extends Error {}

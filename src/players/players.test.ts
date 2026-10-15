@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Chess } from "chess.js";
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError, type TurnInfo } from "../game/types.js";
+import { EffortRejectedError, FatalPlayerError, OutOfFundsError, TransientPlayerError, type TurnInfo } from "../game/types.js";
 import { illegalMoveBonusMs, parseTimeControl, timeCategory } from "../timeControl.js";
 import { AnthropicModel } from "./anthropic.js";
 import { GeminiModel } from "./gemini.js";
-import { LlmPlayer } from "./llmPlayer.js";
+import { LlmPlayer, type ModelClient, type ModelRequest } from "./llmPlayer.js";
 import { OpenAIModel } from "./openai.js";
 import { XaiModel } from "./xai.js";
 
 const DECISION = { reasoning: "Fighting for the center.", action: "move", move: "e5", offer_draw: false };
 
-function turn(): TurnInfo {
+function turn(timeControl = "3+2"): TurnInfo {
   const chess = new Chess();
   chess.move("e4");
-  const tc = parseTimeControl("3+2");
+  const tc = parseTimeControl(timeControl);
   return {
     color: "black",
     fen: chess.fen(),
@@ -22,7 +22,7 @@ function turn(): TurnInfo {
     history: ["e4"],
     startFen: new Chess().fen(),
     moveNumber: 1,
-    timeControl: { ...tc, label: "3+2", category: timeCategory(tc), illegalMoveBonusMs: illegalMoveBonusMs(tc) },
+    timeControl: { ...tc, label: timeControl, category: timeCategory(tc), illegalMoveBonusMs: illegalMoveBonusMs(tc) },
     myClockMs: 180_000,
     opponentClockMs: 181_000,
     drawOffered: false,
@@ -93,7 +93,7 @@ function errorResponse(status: number, body: unknown): Response {
 describe("Claude player", () => {
   it("asks for a structured decision and parses it", async () => {
     const fake = fakeFetch([() => claudeStream(JSON.stringify(DECISION))]);
-    const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "sk-ant-test", effort: "low", fetch: fake.fn });
+    const model = new AnthropicModel({ model: "claude-opus-5-5", apiKey: "sk-ant-test", fetch: fake.fn });
     const player = new LlmPlayer({ provider: "anthropic", model: "claude-opus-5-5" }, model, { input: 4, output: 20 });
     const reply = await player.decide(turn());
     assert.deepEqual(reply, {
@@ -108,7 +108,7 @@ describe("Claude player", () => {
     assert.equal(body.stream, true);
     assert.equal(body.output_config.format.type, "json_schema");
     assert.deepEqual(body.output_config.format.schema.required, ["reasoning", "action", "move", "offer_draw"]);
-    assert.equal(body.output_config.effort, "low");
+    assert.equal(body.output_config.effort, "medium", "the built-in level for blitz");
     assert.match(body.system, /playing a game of chess as Black/);
     assert.match(body.messages[0].content, /Your clock: 3:00 left/);
   });
@@ -173,8 +173,9 @@ describe("Claude player", () => {
 describe("ChatGPT player", () => {
   it("uses the Responses API with a strict JSON schema", async () => {
     const fake = fakeFetch([() => openaiResponse(JSON.stringify({ ...DECISION, move: "c5", offer_draw: true }))]);
-    const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "sk-test", effort: "high", fetch: fake.fn });
-    const player = new LlmPlayer({ provider: "openai", model: "gpt-5.6-sol" }, model, { input: 5, output: 30, cachedInput: 0.5 });
+    const model = new OpenAIModel({ model: "gpt-5.6-sol", apiKey: "sk-test", fetch: fake.fn });
+    const effort = { bullet: "low", blitz: "max", rapid: "high", classical: "max" };
+    const player = new LlmPlayer({ provider: "openai", model: "gpt-5.6-sol" }, model, { input: 5, output: 30, cachedInput: 0.5 }, effort);
     const reply = await player.decide(turn());
     assert.deepEqual(reply, {
       ok: true,
@@ -194,7 +195,7 @@ describe("ChatGPT player", () => {
     assert.equal(body.store, false);
     assert.equal(body.text.format.type, "json_schema");
     assert.equal(body.text.format.strict, true);
-    assert.deepEqual(body.reasoning, { effort: "high" });
+    assert.deepEqual(body.reasoning, { effort: "xhigh" }, "OpenAI's highest level");
     assert.match(body.instructions, /playing a game of chess as Black/);
     assert.match(body.input, /Moves so far: 1\. e4/);
   });
@@ -254,7 +255,7 @@ describe("Gemini player", () => {
           usageMetadata: GEMINI_USAGE,
         }),
     ]);
-    const model = new GeminiModel({ model: "gemini-3.8-flash", apiKey: "AIza-test", effort: "low", fetch: fake.fn });
+    const model = new GeminiModel({ model: "gemini-3.8-flash", apiKey: "AIza-test", fetch: fake.fn });
     const player = new LlmPlayer({ provider: "google", model: "gemini-3.8-flash" }, model, { input: 0.75, output: 3.75, cachedInput: 0.075 });
     const reply = await player.decide(turn());
     assert.deepEqual(reply, {
@@ -268,7 +269,7 @@ describe("Gemini player", () => {
     assert.equal(headers.get("x-goog-api-key"), "AIza-test");
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["reasoning", "action", "move", "offer_draw"]);
-    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: "LOW" });
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: "MEDIUM" });
     assert.match(body.systemInstruction.parts[0].text, /playing a game of chess as Black/);
     assert.match(body.contents[0].parts[0].text, /Moves so far: 1\. e4/);
   });
@@ -276,7 +277,7 @@ describe("Gemini player", () => {
   it("leaves Gemini 2.5's thinking alone, which takes no thinking level", async () => {
     const reply = () => geminiResponse({ candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason: "STOP" }] });
     const fake = fakeFetch([reply, reply]);
-    await new GeminiModel({ model: "models/gemini-2.5-pro", apiKey: "k", effort: "high", fetch: fake.fn }).complete({ system: "s", user: "u" });
+    await new GeminiModel({ model: "models/gemini-2.5-pro", apiKey: "k", fetch: fake.fn }).complete({ system: "s", user: "u", effort: "high" });
     await new GeminiModel({ model: "gemini-3.1-pro-preview", apiKey: "k", fetch: fake.fn }).complete({ system: "s", user: "u" });
     assert.match(fake.requests[0].url, /\/models\/gemini-2\.5-pro:generateContent$/);
     assert.equal(fake.requests[0].body.generationConfig.thinkingConfig, undefined);
@@ -373,8 +374,9 @@ function grokResponse(content: string | null, extra: Record<string, unknown> = {
 describe("Grok player", () => {
   it("uses xAI's Chat Completions API with a strict JSON schema and counts reasoning as output", async () => {
     const fake = fakeFetch([() => grokResponse(JSON.stringify({ ...DECISION, action: "resign", move: null }))]);
-    const model = new XaiModel({ model: "grok-4.7", apiKey: "xai-test", effort: "high", fetch: fake.fn });
-    const player = new LlmPlayer({ provider: "xai", model: "grok-4.7" }, model, { input: 2, output: 6, cachedInput: 0.5 });
+    const model = new XaiModel({ model: "grok-4.7", apiKey: "xai-test", fetch: fake.fn });
+    const effort = { bullet: "low", blitz: "max", rapid: "high", classical: "max" };
+    const player = new LlmPlayer({ provider: "xai", model: "grok-4.7" }, model, { input: 2, output: 6, cachedInput: 0.5 }, effort);
     const reply = await player.decide(turn());
     assert.deepEqual(reply, {
       ok: true,
@@ -389,7 +391,7 @@ describe("Grok player", () => {
     assert.equal(body.response_format.type, "json_schema");
     assert.equal(body.response_format.json_schema.strict, true);
     assert.deepEqual(body.response_format.json_schema.schema.required, ["reasoning", "action", "move", "offer_draw"]);
-    assert.equal(body.reasoning_effort, "high");
+    assert.equal(body.reasoning_effort, "high", "xAI's highest level");
     assert.equal(body.messages[0].role, "system");
     assert.match(body.messages[0].content, /playing a game of chess as Black/);
     assert.match(body.messages[1].content, /Moves so far: 1\. e4/);
@@ -432,5 +434,87 @@ describe("Grok player", () => {
     await assert.rejects(call(), (err: Error) => err instanceof OutOfFundsError && /429: Your team has reached its monthly spending limit/.test(err.message));
     await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError) && /does not exist/.test(err.message));
     await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && /401: Incorrect API key/.test(err.message));
+  });
+});
+
+/** A model that takes only some effort levels, turning the others down as the APIs do. */
+class PickyModel implements ModelClient {
+  readonly asked: (string | undefined)[] = [];
+  constructor(private readonly takes: string[]) {}
+  async complete({ effort }: ModelRequest) {
+    this.asked.push(effort);
+    if (effort !== undefined && !this.takes.includes(effort)) throw new EffortRejectedError(`API error 400: effort ${effort} isn't supported`);
+    return { text: JSON.stringify(DECISION) };
+  }
+}
+
+describe("reasoning effort", () => {
+  it("thinks more the longer the game, by default", async () => {
+    const model = new PickyModel(["low", "medium", "high", "max"]);
+    const player = new LlmPlayer({ provider: "anthropic", model: "claude-x" }, model);
+    for (const tc of ["1+0", "3+2", "15+10", "90+30"]) await player.decide(turn(tc));
+    assert.deepEqual(model.asked, ["low", "medium", "high", "max"]);
+  });
+
+  it("steps down to a level the model takes, and remembers it", async () => {
+    const model = new PickyModel(["low", "medium", "high"]);
+    const rejected = new Map<string, Set<string>>();
+    const first = new LlmPlayer({ provider: "anthropic", model: "claude-x" }, model, undefined, undefined, rejected);
+    assert.equal((await first.decide(turn("90+30"))).ok, true);
+    assert.deepEqual(model.asked, ["max", "xhigh", "high"]);
+    // Another game with the same model goes straight to it.
+    const second = new LlmPlayer({ provider: "anthropic", model: "claude-x" }, model, undefined, undefined, rejected);
+    await second.decide(turn("90+30"));
+    assert.deepEqual(model.asked.slice(3), ["high"]);
+  });
+
+  it("plays at the model's default when it takes no level at all, or none is set", async () => {
+    const model = new PickyModel([]);
+    const player = new LlmPlayer({ provider: "xai", model: "grok-x" }, model);
+    await player.decide(turn("3+2"));
+    await player.decide(turn("3+2"));
+    assert.deepEqual(model.asked, ["medium", "low", undefined, undefined]);
+    const unset = new PickyModel([]);
+    const effort = { bullet: undefined, blitz: undefined, rapid: undefined, classical: undefined };
+    await new LlmPlayer({ provider: "xai", model: "grok-x" }, unset, undefined, effort).decide(turn("3+2"));
+    assert.deepEqual(unset.asked, [undefined]);
+  });
+
+  it("recognizes each API turning an effort down", async () => {
+    const turnedDown = [
+      () =>
+        new AnthropicModel({
+          model: "claude-x",
+          apiKey: "k",
+          fetch: fakeFetch([() => errorResponse(400, { type: "error", error: { type: "invalid_request_error", message: "output_config.effort: 'max' is not supported by this model" } })]).fn,
+        }),
+      () =>
+        new OpenAIModel({
+          model: "gpt-x",
+          apiKey: "k",
+          fetch: fakeFetch([() => errorResponse(400, { error: { message: "Unsupported value: 'xhigh' is not supported with this model.", type: "invalid_request_error", param: "reasoning.effort", code: "unsupported_value" } })]).fn,
+        }),
+      () =>
+        new GeminiModel({
+          model: "gemini-3.1-pro-preview",
+          apiKey: "k",
+          fetch: fakeFetch([() => errorResponse(400, { error: { code: 400, message: "Thinking level MEDIUM is not supported for this model.", status: "INVALID_ARGUMENT" } })]).fn,
+        }),
+      () =>
+        new XaiModel({
+          model: "grok-x",
+          apiKey: "k",
+          fetch: fakeFetch([() => errorResponse(400, { code: "Client specified an invalid argument", error: "Model grok-x does not support parameter reasoningEffort." })]).fn,
+        }),
+    ];
+    for (const model of turnedDown) {
+      await assert.rejects(model().complete({ system: "s", user: "u", effort: "high" }), EffortRejectedError);
+    }
+    const otherError = new AnthropicModel({
+      model: "claude-x",
+      apiKey: "k",
+      fetch: fakeFetch([() => errorResponse(400, { type: "error", error: { type: "invalid_request_error", message: "messages: too long" } })]).fn,
+    });
+    await assert.rejects(otherError.complete({ system: "s", user: "u", effort: "high" }), (err: Error) => err instanceof FatalPlayerError && !(err instanceof EffortRejectedError));
   });
 });
