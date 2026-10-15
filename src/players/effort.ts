@@ -17,6 +17,7 @@ export const EFFORT_LEVELS: Record<Provider, readonly string[]> = {
   anthropic: ["low", "medium", "high", "xhigh", "max"], // output_config.effort
   google: ["minimal", "low", "medium", "high"], // thinkingLevel, Gemini 3 and later
   xai: ["low", "medium", "high"], // reasoning_effort
+  yandex: ["low", "medium", "high"], // reasoning_effort, for the models that reason
 };
 
 /**

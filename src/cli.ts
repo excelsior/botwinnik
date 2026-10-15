@@ -22,8 +22,9 @@ const USAGE = `Usage:
   botwinnik play --time 5+3 --players <model>,<model>
       Play a game in the terminal. With --players the colors are drawn at random.
       A model is written as provider:model (openai:gpt-5.6-sol, anthropic:claude-opus-5-5,
-      google:gemini-3.8-flash, xai:grok-4.7); the provider can be left out when the model
-      name gives it away (claude-..., gpt-..., gemini-..., grok-...).
+      google:gemini-3.8-flash, xai:grok-4.7, yandex:aliceai-llm); the provider can be left
+      out when the model name gives it away (claude-..., gpt-..., gemini-..., grok-...,
+      aliceai-..., yandexgpt...).
 
   botwinnik resume <game-id>
       Continue a paused game: one whose API account ran out of funds, or that was
@@ -135,7 +136,7 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
   const server = createServer(service, {
     providers: config.providers,
     loopbackOnly,
-    listModels: (provider) => listModels(provider, config.providers[provider]!.apiKey),
+    listModels: (provider) => listModels(provider, config.providers[provider]!),
     tournaments,
   });
   return new Promise((resolve, reject) => {
@@ -185,7 +186,7 @@ async function printModels(config: AppConfig): Promise<number> {
     if (!settings) continue;
     console.log(`${PROVIDER_LABELS[provider]}:`);
     try {
-      for (const m of await listModels(provider, settings.apiKey)) {
+      for (const m of await listModels(provider, settings)) {
         if (canPlay(provider, m.id)) console.log(`  ${m.id}${m.name ? `  (${m.name})` : ""}`);
       }
     } catch (err) {

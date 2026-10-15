@@ -73,9 +73,10 @@ ALLOWED_DOMAINS=(
   auth.openai.com
   platform.openai.com
   chatgpt.com
-  # Gemini and Grok players (best-effort; Google's IPs rotate)
+  # Gemini, Grok and Yandex players (best-effort; Google's IPs rotate)
   generativelanguage.googleapis.com
   api.x.ai
+  llm.api.cloud.yandex.net
   # VS Code server + marketplace (best-effort; CDN IPs may rotate)
   update.code.visualstudio.com
   marketplace.visualstudio.com

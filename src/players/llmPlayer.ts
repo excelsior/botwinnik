@@ -7,6 +7,7 @@ import { DEFAULT_EFFORT, effortCandidates, type EffortByCategory } from "./effor
 import { GeminiModel } from "./gemini.js";
 import { OpenAIModel } from "./openai.js";
 import { XaiModel } from "./xai.js";
+import { YandexModel } from "./yandex.js";
 import { parseDecision, systemPrompt, turnPrompt } from "./prompt.js";
 
 export interface ModelRequest {
@@ -98,6 +99,7 @@ export function playerFactory(config: AppConfig): PlayerFactory {
       anthropic: () => new AnthropicModel(options),
       google: () => new GeminiModel(options),
       xai: () => new XaiModel(options),
+      yandex: () => new YandexModel({ ...options, folderId: provider.folderId ?? "" }),
     };
     return new LlmPlayer(spec, clients[spec.provider](), findPrice(spec.model, config.prices), provider.effort, rejected);
   };

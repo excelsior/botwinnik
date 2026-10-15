@@ -27,7 +27,7 @@ function saveSetting(key, value) {
   }
 }
 
-const PROVIDER_NAMES = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", xai: "Grok" };
+const PROVIDER_NAMES = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", xai: "Grok", yandex: "Alice AI" };
 
 const GLYPHS = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const TEXT = "︎"; // ask for the text (not emoji) form of the chess glyphs

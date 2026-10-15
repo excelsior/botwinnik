@@ -9,8 +9,9 @@ after importing it. Each model has an Elo rating for bullet, blitz, rapid and
 classical that moves with every finished game. Models can also meet in
 round-robin tournaments, whose games count for the ratings like any other.
 
-ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
-(xAI API) are supported.
+ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API), Grok
+(xAI API) and Yandex's Alice AI and YandexGPT (Yandex AI Studio) are
+supported.
 
 ## Setup
 
@@ -27,7 +28,10 @@ example Claude vs Claude). Keys come from
 [platform.openai.com](https://platform.openai.com/api-keys),
 [platform.claude.com](https://platform.claude.com/settings/keys),
 [Google AI Studio](https://aistudio.google.com/apikey) and
-[console.x.ai](https://console.x.ai).
+[console.x.ai](https://console.x.ai). Yandex takes two settings: an API key
+of a service account with the `ai.languageModels.user` role, created in the
+[Yandex Cloud console](https://console.yandex.cloud), and the ID of the folder
+the service account is in, where the models run and are billed.
 
 ```ini
 [openai]
@@ -50,6 +54,12 @@ api_key = xai-...
 models = grok-4.7, grok-4.6, grok-4.3
 effort =
 
+[yandex]
+api_key = AQVN...                                  ; the service account's API key
+folder_id = b1g...                                 ; its folder
+models = aliceai-llm, aliceai-llm-flash, yandexgpt-5.1
+effort =                                           ; for the models that reason
+
 [app]
 host = 127.0.0.1
 port = 3000
@@ -59,23 +69,29 @@ games_dir = games
 `effort` sets how hard the models think, by the game's time category. Left
 empty, it is `low` for bullet, `medium` for blitz, `high` for rapid and `max`
 for classical, so the faster the game, the faster the moves. `max` means the
-highest level the API has (OpenAI's `xhigh`, Gemini's and Grok's `high`). One
-level (say `effort = low`) applies to every game; four, comma-separated, set
-bullet, blitz, rapid and classical (`effort = low, low, medium, high`), and
+highest level the API has (OpenAI's `xhigh`; Gemini's, Grok's and Yandex's
+`high`). One level (say `effort = low`) applies to every game; four,
+comma-separated, set bullet, blitz, rapid and classical
+(`effort = low, low, medium, high`), and
 `default` leaves a category to the model's own default. The levels are each
 API's own: `none`, `minimal`, `low`, `medium`, `high` and `xhigh` for OpenAI;
 `low`, `medium`, `high`, `xhigh` and `max` for Claude; `minimal`, `low`,
 `medium` and `high` for Gemini 3 and later (Gemini 2.5 ignores it); `low`,
-`medium` and `high` for Grok. Not every model takes every level: when the API
-turns one down, the player asks again a level lower, down to `low`, and then
-with no effort at all. Each model's turned-down levels are remembered until
-the app restarts, so that costs a quick extra request once.
+`medium` and `high` for Grok and Yandex (whose reasoning models take it). Not
+every model takes every level: when the API turns one down, the player asks
+again a level lower, down to `low`, and then with no effort at all. Each
+model's turned-down levels are remembered until the app restarts, so that
+costs a quick extra request once.
 
 The setup form suggests every model each key can use, fetched from the
 provider's API (OpenAI's, Google's and xAI's lists are narrowed to chat models
-that support structured outputs), with the `models` from `config.ini` that the key can use
-listed first. If the list can't be fetched, the form says why and suggests
-just the `models` lists. Any model ID can be typed in either way. Use
+that support structured outputs, Yandex's to text models), with the `models`
+from `config.ini` that the key can use listed first. If the list can't be
+fetched, the form says why and suggests just the `models` lists. Any model ID
+can be typed in either way. Yandex names its models by URI,
+`gpt://<folder_id>/<model>`; Botwinnik's IDs leave out the
+`gpt://<folder_id>/` (and a trailing `/latest`), so `aliceai-llm` means
+`gpt://<folder_id>/aliceai-llm`, and a whole URI works too. Use
 `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
 elsewhere.
 
@@ -121,7 +137,8 @@ npm run botwinnik -- import game.pgn   # a game without a result comes back paus
 ```
 
 A model can be written as `provider:model` (`openai:my-model`); the provider
-can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
+can be left out when the name starts with `claude`, `gpt`, `gemini`, `grok`,
+`aliceai` or `yandexgpt`.
 
 ## Rules
 
@@ -163,11 +180,12 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
 - **Out of funds:** if a call fails because the API account has run out of
   money (OpenAI's exhausted quota, Anthropic's billing error or low credit
   balance, Gemini's depleted prepaid credits, spending cap or used-up daily
-  quota, an xAI team with no credits or at its spending limit), the game pauses with both clocks stopped. Add funds, then press
-  **Resume** on the game's page or run `botwinnik resume <game-id>`, and the
-  game continues where it stopped, with the same player to move. Time spent
-  paused doesn't count, and a paused game stays paused if the app is
-  restarted. It can also be aborted.
+  quota, an xAI team with no credits or at its spending limit, a suspended
+  Yandex Cloud billing account), the game pauses with both clocks stopped.
+  Add funds, then press **Resume** on the game's page or run
+  `botwinnik resume <game-id>`, and the game continues where it stopped,
+  with the same player to move. Time spent paused doesn't count, and a
+  paused game stays paused if the app is restarted. It can also be aborted.
 
 Each reply is a JSON object (`reasoning`, `action`, `move`, `offer_draw`)
 enforced through structured outputs on every API. Claude's refusal fallbacks
@@ -202,8 +220,11 @@ ones (2.5 Flash, 3.1 Flash-Lite, 3.5 Flash-Lite, 3.6 Flash) from LiteLLM's
 price list, so check them. Gemini 3.8 Flash is at its introductory price,
 which doubles on January 1, 2027; the built-in price switches on that date.
 Gemini and Grok charge more for prompts over 200k tokens, which a player's
-prompt never comes close to. Set or override any model's price in
-`config.ini`:
+prompt never comes close to. Yandex's models have no built-in price: add
+them under `[prices]` from
+[Yandex's pricing page](https://aistudio.yandex.ru/docs/en/ai-studio/pricing.html),
+which gives them per 1,000 tokens, so multiply by 1,000. Set or override any
+model's price in `config.ini`:
 
 ```ini
 [prices]
@@ -289,11 +310,11 @@ comments.
 A Botwinnik export comes back as it was, keeping its game ID unless a saved
 game already has it. PGNs from elsewhere work too when they have a
 `TimeControl` in seconds (`"300+3"`) and model names that start with `claude`,
-`gpt`, `gemini` or `grok` (or `WhiteProvider`/`BlackProvider` tags saying
-`anthropic`, `openai`, `google` or `xai`); their comments become the moves'
-reasoning. A game without a result is imported paused, ready to resume from
-its last position with the clocks it had, unless that position already ends
-the game.
+`gpt`, `gemini`, `grok`, `aliceai` or `yandexgpt` (or
+`WhiteProvider`/`BlackProvider` tags saying `anthropic`, `openai`, `google`,
+`xai` or `yandex`); their comments become the moves' reasoning. A game
+without a result is imported paused, ready to resume from its last position
+with the clocks it had, unless that position already ends the game.
 
 ## Development
 
@@ -303,8 +324,8 @@ npm run typecheck
 ```
 
 `src/game` holds the engine (`game.ts`), PGN export and import, storage and
-the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini
-and xAI clients;
+the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini,
+xAI and Yandex clients;
 `src/server` the admin API; `public/` the web page.
 
 `src/tournament` holds the round-robin schedule, the standings and the
@@ -314,7 +335,7 @@ tournament service, which runs tournaments on top of the game service.
 
 The repository started as a TypeScript project for a dev container with
 **Claude Code** and **Codex** preinstalled behind an egress firewall
-(`.devcontainer/init-firewall.sh`, allowing GitHub, npm and the four model
+(`.devcontainer/init-firewall.sh`, allowing GitHub, npm and the five model
 APIs among others). Open the folder in VS Code and run **Dev Containers: Reopen in
 Container**, or `devcontainer up --workspace-folder .`.
 

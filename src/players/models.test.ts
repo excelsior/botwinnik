@@ -30,7 +30,7 @@ describe("model lists", () => {
       { data: [claude("claude-fable-5-1", "Claude Fable 5.1"), claude("claude-old", "Claude Old", false)], has_more: true, first_id: "claude-fable-5-1", last_id: "claude-old" },
       { data: [claude("claude-opus-5-5", "Claude Opus 5.5")], has_more: false, first_id: "claude-opus-5-5", last_id: "claude-opus-5-5" },
     ]);
-    const models = await listModels("anthropic", "sk-ant-test", { fetch: fake.fn });
+    const models = await listModels("anthropic", { apiKey: "sk-ant-test" }, { fetch: fake.fn });
     assert.deepEqual(models, [
       { id: "claude-fable-5-1", name: "Claude Fable 5.1" },
       { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
@@ -52,7 +52,7 @@ describe("model lists", () => {
         ],
       },
     ]);
-    const models = await listModels("openai", "sk-test", { fetch: fake.fn });
+    const models = await listModels("openai", { apiKey: "sk-test" }, { fetch: fake.fn });
     assert.deepEqual(models.map((m) => m.id), ["gpt-5.6-sol", "text-embedding-3-large", "gpt-5.6-luna"]);
     assert.match(fake.requests[0].url, /\/v1\/models$/);
     assert.equal(fake.requests[0].headers.get("authorization"), "Bearer sk-test");
@@ -68,7 +68,7 @@ describe("model lists", () => {
       { models: [gemini("gemini-2.5-pro", "Gemini 2.5 Pro"), gemini("gemini-embedding-001", "Gemini Embedding", ["embedContent"])], nextPageToken: "next" },
       { models: [gemini("gemini-3-pro", "Gemini 3 Pro")] },
     ]);
-    const models = await listModels("google", "AIza-test", { fetch: fake.fn });
+    const models = await listModels("google", { apiKey: "AIza-test" }, { fetch: fake.fn });
     assert.deepEqual(models, [
       { id: "gemini-3-pro", name: "Gemini 3 Pro" },
       { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
@@ -88,16 +88,36 @@ describe("model lists", () => {
         ],
       },
     ]);
-    const models = await listModels("xai", "xai-test", { fetch: fake.fn });
+    const models = await listModels("xai", { apiKey: "xai-test" }, { fetch: fake.fn });
     assert.deepEqual(models.map((m) => m.id), ["grok-4", "grok-3-mini"]);
     assert.equal(fake.requests[0].url, "https://api.x.ai/v1/models");
     assert.equal(fake.requests[0].headers.get("authorization"), "Bearer xai-test");
   });
 
+  it("lists Yandex's text models in the folder by their short IDs", async () => {
+    const fake = fakeFetch([
+      {
+        object: "list",
+        data: [
+          { id: "gpt://b1gfolder/aliceai-llm/latest", object: "model", owned_by: "system" },
+          { id: "gpt://b1gfolder/aliceai-llm", object: "model", owned_by: "system" },
+          { id: "gpt://b1gfolder/yandexgpt/rc", object: "model", owned_by: "system" },
+          { id: "emb://b1gfolder/text-search-doc/latest", object: "model", owned_by: "system" },
+          { id: "gpt://b1gother/yandexgpt-lite/latest@tuned", object: "model", owned_by: "someone" },
+        ],
+      },
+    ]);
+    const models = await listModels("yandex", { apiKey: "AQVN-test", folderId: "b1gfolder" }, { fetch: fake.fn });
+    assert.deepEqual(models.map((m) => m.id), ["aliceai-llm", "yandexgpt/rc", "gpt://b1gother/yandexgpt-lite/latest@tuned"]);
+    assert.equal(fake.requests[0].url, "https://llm.api.cloud.yandex.net/v1/models");
+    assert.equal(fake.requests[0].headers.get("authorization"), "Bearer AQVN-test");
+    assert.equal(fake.requests[0].headers.get("openai-project"), "b1gfolder");
+  });
+
   it("reports a rejected key", async () => {
     const fake = fakeFetch([{ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }], 401);
     await assert.rejects(
-      listModels("anthropic", "bad", { fetch: fake.fn }),
+      listModels("anthropic", { apiKey: "bad" }, { fetch: fake.fn }),
       (err) => err instanceof FatalPlayerError && err.message === "Anthropic API error 401: invalid x-api-key",
     );
   });
@@ -110,6 +130,7 @@ describe("model lists", () => {
       assert.ok(!canPlay("openai", id), id);
     }
     assert.ok(canPlay("anthropic", "claude-anything"));
+    assert.ok(canPlay("yandex", "aliceai-llm"));
     for (const id of ["gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3-pro-preview", "gemini-3.5-flash", "gemini-flash-latest"]) {
       assert.ok(canPlay("google", id), id);
     }

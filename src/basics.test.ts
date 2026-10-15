@@ -129,7 +129,7 @@ describe("config", () => {
   it("requires at least one API key", () => {
     assert.throws(
       () => configFromIni(parseIni("[openai]\napi_key =\n[anthropic]\n")),
-      /at least one API key: set api_key under \[openai\], \[anthropic\], \[google\] or \[xai\]/,
+      /at least one API key: set api_key under \[openai\], \[anthropic\], \[google\], \[xai\] or \[yandex\]/,
     );
     const gemini = configFromIni(parseIni("[google]\napi_key = AIza-test\n[xai]\napi_key = xai-test\neffort = low\n"));
     assert.deepEqual(Object.keys(gemini.providers), ["google", "xai"]);
@@ -158,6 +158,17 @@ describe("config", () => {
     assert.throws(() => configFromIni(parseIni("[openai]\napi_key=k\n[app]\nport=abc\n")), /port/);
   });
 
+  it("needs Yandex's folder next to its key", () => {
+    assert.throws(() => configFromIni(parseIni("[yandex]\napi_key = AQVN-test\n")), /\[yandex\] needs folder_id/);
+    const config = configFromIni(parseIni("[yandex]\napi_key = AQVN-test\nfolder_id = b1gfolder\n"));
+    assert.deepEqual(config.providers.yandex, {
+      apiKey: "AQVN-test",
+      folderId: "b1gfolder",
+      models: ["aliceai-llm", "aliceai-llm-flash", "yandexgpt-5.1"],
+      effort: { bullet: "low", blitz: "medium", rapid: "high", classical: "max" },
+    });
+  });
+
   it("reads effort by time category", () => {
     const effort = (value: string, provider = "anthropic") =>
       configFromIni(parseIni(`[${provider}]\napi_key = k\neffort = ${value}\n`)).providers[provider as "anthropic"]!.effort;
@@ -176,6 +187,9 @@ describe("config", () => {
     assert.deepEqual(parsePlayerSpec("grok-4"), { provider: "xai", model: "grok-4" });
     assert.deepEqual(parsePlayerSpec("gemini:my-tuned-model"), { provider: "google", model: "my-tuned-model" });
     assert.deepEqual(parsePlayerSpec("xai:grok-x"), { provider: "xai", model: "grok-x" });
+    assert.deepEqual(parsePlayerSpec("aliceai-llm"), { provider: "yandex", model: "aliceai-llm" });
+    assert.deepEqual(parsePlayerSpec("yandexgpt/rc"), { provider: "yandex", model: "yandexgpt/rc" });
+    assert.deepEqual(parsePlayerSpec("yandex:qwen3-235b-a22b-fp8/latest"), { provider: "yandex", model: "qwen3-235b-a22b-fp8/latest" });
     assert.throws(() => parsePlayerSpec("mystery-model"), /provider/);
     assert.throws(() => parsePlayerSpec("bard:x"), /Unknown provider/);
   });
