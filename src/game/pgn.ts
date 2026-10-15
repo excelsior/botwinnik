@@ -25,10 +25,10 @@ const PGN_TERMINATION: Record<string, string> = {
 export function toPgn(game: GameRecord, ratings?: GameRatings | null): string {
   const date = new Date(game.createdAt);
   const tags: [string, string][] = [
-    ["Event", "Botwinnik AI match"],
+    ["Event", game.tournament?.name ?? "Botwinnik AI match"],
     ["Site", "Botwinnik"],
     ["Date", `${date.getUTCFullYear()}.${pad(date.getUTCMonth() + 1)}.${pad(date.getUTCDate())}`],
-    ["Round", "-"],
+    ["Round", game.tournament ? String(game.tournament.round) : "-"],
     ["White", game.white.model],
     ["Black", game.black.model],
     ["Result", game.result],

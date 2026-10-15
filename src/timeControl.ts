@@ -39,17 +39,28 @@ function trimNumber(n: number): string {
 }
 
 /**
- * FIDE's definition, based on the time each player gets for a 60-move game
- * (base + 60 × increment): 10 minutes or less is blitz, under 60 minutes is
- * rapid, 60 minutes or more is classical (FIDE "standard"). FIDE has no bullet
- * category; the usual under-3-minutes split is used for it.
+ * Based on the time each player gets for a 60-move game (base + 60 ×
+ * increment), as FIDE does: under 10 minutes is blitz, under 60 minutes is
+ * rapid, 60 minutes or more is classical (FIDE "standard"). Unlike FIDE, which
+ * puts exactly 10 minutes in blitz, 10+0 is rapid, as on chess.com and Lichess.
+ * FIDE has no bullet category; the usual under-3-minutes split is used for it.
  */
 export function timeCategory(tc: TimeControl): TimeCategory {
   const estimatedMs = tc.baseMs + 60 * tc.incrementMs;
   if (estimatedMs < 3 * MINUTE) return "bullet";
-  if (estimatedMs <= 10 * MINUTE) return "blitz";
+  if (estimatedMs < 10 * MINUTE) return "blitz";
   if (estimatedMs < 60 * MINUTE) return "rapid";
   return "classical";
+}
+
+/**
+ * A rough time to spend on the next move: the time left spread over the moves
+ * the game is still likely to last (35 at the start, never fewer than 10),
+ * plus the increment, and never more than half the time left.
+ */
+export function moveTimeBudgetMs(remainingMs: number, incrementMs: number, moveNumber: number): number {
+  const movesToGo = Math.max(10, 35 - moveNumber / 2);
+  return Math.max(0, Math.min(remainingMs / movesToGo + incrementMs, remainingMs / 2));
 }
 
 /** Extra time the opponent receives after a player's first illegal move. */
@@ -79,6 +90,13 @@ export function pgnClock(ms: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** A rounded duration for prompts: "12 seconds", or whole minutes from 90 seconds on ("3 minutes"). */
+export function describeRoughly(ms: number): string {
+  const s = Math.max(1, Math.round(ms / SECOND));
+  if (s < 90) return `${s} second${s === 1 ? "" : "s"}`;
+  return `${Math.round(s / 60)} minutes`;
 }
 
 /** "1 minute", "2 minutes", "30 seconds". */

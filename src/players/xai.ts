@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { CompletionUsage } from "openai/resources/completions";
 import type { ReasoningEffort } from "openai/resources/shared";
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
+import { EffortRejectedError, FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -11,8 +11,6 @@ export const XAI_BASE_URL = "https://api.x.ai/v1";
 export interface XaiModelOptions {
   model: string;
   apiKey: string;
-  /** reasoning_effort (low | medium | high...; which ones depends on the model); omitted means the model's default. */
-  effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
   baseURL?: string;
@@ -37,7 +35,8 @@ export class XaiModel implements ModelClient {
     });
   }
 
-  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
+  /** `effort`: reasoning_effort (low | medium | high...; which ones depends on the model); omitted means its default. */
+  async complete({ system, user, effort }: ModelRequest): Promise<ModelResponse> {
     try {
       const completion = await this.client.chat.completions.create({
         model: this.options.model,
@@ -49,7 +48,7 @@ export class XaiModel implements ModelClient {
           type: "json_schema",
           json_schema: { name: "chess_decision", schema: DECISION_SCHEMA, strict: true },
         },
-        ...(this.options.effort ? { reasoning_effort: this.options.effort as ReasoningEffort } : {}),
+        ...(effort ? { reasoning_effort: effort as ReasoningEffort } : {}),
       });
       const usage = usageOf(completion.usage);
       const choice = completion.choices[0];
@@ -94,6 +93,8 @@ export function classifyXaiError(err: unknown): unknown {
     // A team without credits (a 403 saying so), or one that hit its spending limit.
     if (status === 402 || /credits|spending limit|billing/i.test(message)) return new OutOfFundsError(detail);
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
+    // Say, a Grok model that doesn't take reasoning_effort at all.
+    if ((status === 400 || status === 422) && /reasoning|effort/i.test(message)) return new EffortRejectedError(detail);
     return new FatalPlayerError(detail);
   }
   return err;

@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync, exists
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { addSpend, emptySpend, type Spend } from "../pricing.js";
+import { timeCategory } from "../timeControl.js";
 import type { GameRecord } from "./types.js";
 
 export interface GameSummary {
@@ -16,6 +17,7 @@ export interface GameSummary {
   moves: number;
   /** USD for both players; null when a model's price is unknown. */
   costUsd: number | null;
+  tournament?: GameRecord["tournament"];
 }
 
 /** Both players' spend added up. */
@@ -45,7 +47,7 @@ export class GameStore {
     if (!/^[\w-]+$/.test(id)) return undefined;
     const file = this.file(id);
     if (!existsSync(file)) return undefined;
-    return JSON.parse(readFileSync(file, "utf8")) as GameRecord;
+    return read(file);
   }
 
   list(): GameRecord[] {
@@ -53,7 +55,7 @@ export class GameStore {
       .filter((f) => f.endsWith(".json"))
       .flatMap((f) => {
         try {
-          return [JSON.parse(readFileSync(path.join(this.dir, f), "utf8")) as GameRecord];
+          return [read(path.join(this.dir, f))];
         } catch {
           return [];
         }
@@ -64,6 +66,13 @@ export class GameStore {
   private file(id: string): string {
     return path.join(this.dir, `${id}.json`);
   }
+}
+
+/** A saved game, its category worked out again: 10+0 games saved as blitz count as rapid. */
+function read(file: string): GameRecord {
+  const game = JSON.parse(readFileSync(file, "utf8")) as GameRecord;
+  game.timeControl.category = timeCategory(game.timeControl);
+  return game;
 }
 
 export function summarize(game: GameRecord): GameSummary {
@@ -78,5 +87,6 @@ export function summarize(game: GameRecord): GameSummary {
     termination: game.termination?.message ?? null,
     moves: game.moves.length,
     costUsd: gameSpend(game).costUsd,
+    ...(game.tournament ? { tournament: game.tournament } : {}),
   };
 }

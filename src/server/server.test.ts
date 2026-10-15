@@ -8,13 +8,14 @@ import { assignColors, GameService } from "../game/service.js";
 import { GameStore } from "../game/store.js";
 import { createGameRecord } from "../game/game.js";
 import { OutOfFundsError, type PlayerSpec } from "../game/types.js";
-import { callSpend, CLAUDE, GPT, ScriptedPlayer } from "../testing.js";
+import { callSpend, CLAUDE, FoolsMatePlayer, GPT, ScriptedPlayer } from "../testing.js";
+import { DEFAULT_EFFORT } from "../players/effort.js";
 import { parseTimeControl } from "../timeControl.js";
 import { createServer, newestSourceChange } from "./server.js";
 
 const providers = {
-  anthropic: { apiKey: "k", models: ["claude-test"] },
-  openai: { apiKey: "k", models: ["gpt-test"] },
+  anthropic: { apiKey: "k", models: ["claude-test"], effort: DEFAULT_EFFORT },
+  openai: { apiKey: "k", models: ["gpt-test"], effort: DEFAULT_EFFORT },
 };
 
 /** While set, OpenAI players fail as if their account had run out of funds. */
@@ -159,6 +160,23 @@ describe("game service", () => {
       const saved = store.load(game.id);
       assert.equal(saved?.status, "finished");
       assert.equal(saved?.unfinishedCall, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rates a 10+0 game saved as blitz as rapid", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const store = new GameStore(dir);
+      const game = createGameRecord({ id: store.newId(), timeControl: parseTimeControl("10+0"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+      Object.assign(game, { status: "finished", result: "1-0", finishedAt: new Date().toISOString() });
+      game.timeControl.category = "blitz"; // as saved before 10+0 counted as rapid
+      store.save(game);
+      assert.equal(store.load(game.id)?.timeControl.category, "rapid");
+      const ratings = new GameService(store, foolsMatePlayers).ratings();
+      assert.deepEqual(ratings.table("blitz"), []);
+      assert.deepEqual(ratings.table("rapid").map((m) => m.model).sort(), ["claude-test", "gpt-test"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -401,5 +419,86 @@ describe("admin server", () => {
       req.end();
     });
     assert.equal(status, 403);
+  });
+});
+
+describe("tournament API", () => {
+  let dir: string;
+  let base: string;
+  let close: () => void;
+
+  before(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    const server = createServer(new GameService(new GameStore(dir), (spec) => new FoolsMatePlayer(spec)), { providers, loopbackOnly: true });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    close = () => {
+      server.closeAllConnections();
+      server.close();
+    };
+  });
+
+  after(() => {
+    close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const post = (url: string, body: unknown) =>
+    fetch(`${base}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const OPUS = { provider: "anthropic", model: "claude-opus" };
+
+  it("validates new tournaments", async () => {
+    const cases: [unknown, RegExp][] = [
+      [{ players: [CLAUDE, GPT, OPUS] }, /timeControl/],
+      [{ timeControl: "5+3", players: [CLAUDE, GPT] }, /at least 3 players/],
+      [{ timeControl: "5+3", players: [CLAUDE, GPT, { ...GPT }] }, /gpt-test is listed twice/],
+      [{ timeControl: "5+3", players: [CLAUDE, GPT, { provider: "bard", model: "x" }] }, /Player 3: unknown provider/],
+      [{ timeControl: "5+3", players: [CLAUDE, GPT, { provider: "openai", model: "" }] }, /Player 3: pick a model/],
+      [{ timeControl: "5+3", players: [CLAUDE, GPT, OPUS], name: "x".repeat(81) }, /80 characters/],
+      [{ timeControl: "5+3", players: "all" }, /players must list/],
+    ];
+    for (const [body, error] of cases) {
+      const res = await post("/api/tournaments", body);
+      assert.equal(res.status, 400, JSON.stringify(body));
+      assert.match((await res.json()).error, error);
+    }
+  });
+
+  it("runs a tournament, lists it and shows its table and games", async () => {
+    const res = await post("/api/tournaments", { name: "Autumn\n cup", timeControl: "3+2", players: [CLAUDE, GPT, OPUS] });
+    assert.equal(res.status, 201);
+    const { tournament } = await res.json();
+    assert.equal(tournament.name, "Autumn cup");
+    assert.equal(tournament.rounds.length, 3);
+
+    let view;
+    for (let i = 0; i < 100; i++) {
+      view = await (await fetch(`${base}/api/tournaments/${tournament.id}`)).json();
+      if (view.tournament.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(view.tournament.status, "finished");
+    assert.equal(view.round, null);
+    assert.equal(view.standings.length, 3);
+    assert.deepEqual(view.standings.map((s: { points: number }) => s.points), [1, 1, 1]);
+    const ids = view.tournament.rounds.map((r: { games: { gameId: string }[] }) => r.games[0].gameId);
+    assert.deepEqual(Object.keys(view.games).sort(), [...ids].sort());
+    assert.deepEqual(view.games[ids[1]].tournament, { id: tournament.id, name: "Autumn cup", round: 2 });
+
+    const pgn = await (await fetch(`${base}/api/games/${ids[1]}/pgn`)).text();
+    assert.match(pgn, /\[Event "Autumn cup"\]/);
+    assert.match(pgn, /\[Round "2"\]/);
+    const { game } = await (await fetch(`${base}/api/games/${ids[1]}`)).json();
+    assert.equal(game.tournament.round, 2);
+
+    const blitz = (await (await fetch(`${base}/api/ratings`)).json()).categories.blitz;
+    assert.equal(blitz.length, 3, "the tournament's games are rated");
+
+    const list = await (await fetch(`${base}/api/tournaments`)).json();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].gamesPlayed, 3);
+    assert.equal(list[0].category, "blitz");
+    assert.equal((await post(`/api/tournaments/${tournament.id}/abort`, {})).status, 409);
+    assert.equal((await fetch(`${base}/api/tournaments/nope`)).status, 404);
   });
 });

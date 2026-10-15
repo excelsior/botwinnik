@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ReasoningEffort } from "openai/resources/shared";
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
+import { EffortRejectedError, FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -8,8 +8,6 @@ import { DECISION_SCHEMA } from "./prompt.js";
 export interface OpenAIModelOptions {
   model: string;
   apiKey: string;
-  /** Reasoning effort, e.g. low | medium | high; omitted means the model's default. */
-  effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
   baseURL?: string;
@@ -29,7 +27,8 @@ export class OpenAIModel implements ModelClient {
     });
   }
 
-  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
+  /** `effort`: reasoning effort, none | minimal | low | medium | high | xhigh, as the model allows; omitted means its default. */
+  async complete({ system, user, effort }: ModelRequest): Promise<ModelResponse> {
     try {
       const response = await this.client.responses.create({
         model: this.options.model,
@@ -39,7 +38,7 @@ export class OpenAIModel implements ModelClient {
         text: {
           format: { type: "json_schema", name: "chess_decision", schema: DECISION_SCHEMA, strict: true },
         },
-        ...(this.options.effort ? { reasoning: { effort: this.options.effort as ReasoningEffort } } : {}),
+        ...(effort ? { reasoning: { effort: effort as ReasoningEffort } } : {}),
       });
       const usage: Usage | undefined = response.usage
         ? {
@@ -75,6 +74,8 @@ export function classifyOpenAIError(err: unknown): unknown {
     const detail = `OpenAI API error ${status}: ${body?.message ?? err.message}`;
     if (err.code === "insufficient_quota" || status === 402) return new OutOfFundsError(detail);
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
+    // An effort the model doesn't take (param "reasoning.effort"), or a model without reasoning.
+    if (status === 400 && /reasoning|effort/i.test(`${err.param ?? ""} ${detail}`)) return new EffortRejectedError(detail);
     return new FatalPlayerError(detail);
   }
   return err;

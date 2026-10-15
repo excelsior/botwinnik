@@ -15,6 +15,8 @@ export interface StartGameRequest {
   firstPlayerColor: Color | "random";
   /** Optional starting position. */
   startFen?: string;
+  /** Set when a tournament starts the game. */
+  tournament?: GameRecord["tournament"];
 }
 
 export function assignColors(
@@ -79,6 +81,7 @@ export class GameService {
       black,
       colorsAssigned,
       startFen: request.startFen,
+      tournament: request.tournament,
     });
     this.store.save(record);
     this.launch(new GameRunner(record, players, this.runnerOptions()));

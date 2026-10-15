@@ -4,8 +4,10 @@ import { Chess } from "chess.js";
 import { ConfigError, configFromIni, parseIni, parsePlayerSpec } from "./config.js";
 import { formatMoveList, hasOnlyKing, resolveMove } from "./game/moves.js";
 import {
+  describeRoughly,
   formatClock,
   illegalMoveBonusMs,
+  moveTimeBudgetMs,
   parseTimeControl,
   pgnClock,
   pgnTimeControl,
@@ -30,13 +32,14 @@ describe("time controls", () => {
     assert.equal(pgnTimeControl(parseTimeControl("5+3")), "300+3");
   });
 
-  it("categorizes by FIDE's base + 60 × increment", () => {
+  it("categorizes by base + 60 × increment", () => {
     const cat = (s: string) => timeCategory(parseTimeControl(s));
     assert.equal(cat("1+0"), "bullet");
     assert.equal(cat("2+1"), "blitz"); // 2 + 1 = 3 minutes
     assert.equal(cat("3+2"), "blitz");
     assert.equal(cat("5+3"), "blitz"); // 5 + 3 = 8 minutes
-    assert.equal(cat("10+0"), "blitz");
+    assert.equal(cat("9+0"), "blitz");
+    assert.equal(cat("10+0"), "rapid");
     assert.equal(cat("10+5"), "rapid");
     assert.equal(cat("15+10"), "rapid");
     assert.equal(cat("45+0"), "rapid");
@@ -59,6 +62,16 @@ describe("time controls", () => {
     assert.equal(formatClock(7_350), "0:07.3");
     assert.equal(formatClock(-5), "0:00.0");
     assert.equal(pgnClock(301_400), "0:05:01");
+  });
+
+  it("suggests a time for each move", () => {
+    assert.equal(Math.round(moveTimeBudgetMs(300_000, 3_000, 1)), 11_696); // 5:00 over 34.5 moves, plus 3s
+    assert.equal(moveTimeBudgetMs(5_400_000, 30_000, 70), 570_000); // at least 10 moves to go
+    assert.equal(moveTimeBudgetMs(4_000, 3_000, 40), 2_000); // never more than half the time left
+    assert.equal(moveTimeBudgetMs(-10, 0, 1), 0);
+    assert.equal(describeRoughly(11_696), "12 seconds");
+    assert.equal(describeRoughly(200), "1 second");
+    assert.equal(describeRoughly(186_000), "3 minutes");
   });
 });
 
@@ -120,7 +133,8 @@ describe("config", () => {
     );
     const gemini = configFromIni(parseIni("[google]\napi_key = AIza-test\n[xai]\napi_key = xai-test\neffort = low\n"));
     assert.deepEqual(Object.keys(gemini.providers), ["google", "xai"]);
-    assert.equal(gemini.providers.xai!.effort, "low");
+    assert.deepEqual(gemini.providers.xai!.effort, { bullet: "low", blitz: "low", rapid: "low", classical: "low" });
+    assert.deepEqual(gemini.providers.google!.effort, { bullet: "low", blitz: "medium", rapid: "high", classical: "max" }, "the built-in levels");
     const config = configFromIni(parseIni("[anthropic]\napi_key = sk-ant\n"), "/srv");
     assert.deepEqual(Object.keys(config.providers), ["anthropic"]);
     assert.ok(config.providers.anthropic!.models.length > 0, "default models are filled in");
@@ -133,11 +147,24 @@ describe("config", () => {
     const config = configFromIni(
       parseIni("[openai]\napi_key=k\nmodels=gpt-x, gpt-y\neffort=low\n[app]\nhost=0.0.0.0\nport=8080\ngames_dir=/data/games\n"),
     );
-    assert.deepEqual(config.providers.openai, { apiKey: "k", models: ["gpt-x", "gpt-y"], effort: "low" });
+    assert.deepEqual(config.providers.openai, {
+      apiKey: "k",
+      models: ["gpt-x", "gpt-y"],
+      effort: { bullet: "low", blitz: "low", rapid: "low", classical: "low" },
+    });
     assert.equal(config.host, "0.0.0.0");
     assert.equal(config.port, 8080);
     assert.equal(config.gamesDir, "/data/games");
     assert.throws(() => configFromIni(parseIni("[openai]\napi_key=k\n[app]\nport=abc\n")), /port/);
+  });
+
+  it("reads effort by time category", () => {
+    const effort = (value: string, provider = "anthropic") =>
+      configFromIni(parseIni(`[${provider}]\napi_key = k\neffort = ${value}\n`)).providers[provider as "anthropic"]!.effort;
+    assert.deepEqual(effort("minimal, Low, default, xhigh", "openai"), { bullet: "minimal", blitz: "low", rapid: undefined, classical: "xhigh" });
+    assert.deepEqual(effort("default"), { bullet: undefined, blitz: undefined, rapid: undefined, classical: undefined });
+    assert.throws(() => effort("low, high"), /\[anthropic\] effort: expected one level, or four \(for bullet, blitz, rapid, classical\)/);
+    assert.throws(() => effort("minimal"), /"minimal" isn't a level; use low, medium, high, xhigh, max, default/);
   });
 
   it("parses player specs", () => {

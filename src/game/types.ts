@@ -128,6 +128,22 @@ export interface GameRecord {
   lastDrawOfferBy: Color | null;
   result: GameResult;
   termination: Termination | null;
+  /** Set for a game played in a tournament. */
+  tournament?: TournamentGame;
+  /**
+   * The reasoning effort each player's requests go out with (null: the
+   * model's own default), the one it asks for first until it has replied.
+   * Absent for players without one, and for games from before it was kept.
+   */
+  effort?: Partial<Record<Color, string | null>>;
+}
+
+/** The tournament a game belongs to. */
+export interface TournamentGame {
+  id: string;
+  name: string;
+  /** 1-based. */
+  round: number;
 }
 
 /** What a player decided to do on its turn. */
@@ -150,6 +166,8 @@ export interface TurnInfo {
   timeControl: GameRecord["timeControl"];
   myClockMs: number;
   opponentClockMs: number;
+  /** How long this player took over its previous move, if it has made one. */
+  myLastMoveMs?: number;
   /** The opponent has offered a draw that can be accepted now. */
   drawOffered: boolean;
   /** This player may attach a draw offer to its move. */
@@ -168,11 +186,15 @@ export type PlayerReply = (
 ) & {
   /** What the request used and cost, when known. */
   spend?: Spend;
+  /** The reasoning effort the request went out with; null for the model's default. */
+  effort?: string | null;
 };
 
 export interface Player {
   readonly spec: PlayerSpec;
   decide(turn: TurnInfo): Promise<PlayerReply>;
+  /** The reasoning effort it will ask for first in games of this category; null for the model's default. */
+  effortFor?(category: TimeCategory): string | null;
 }
 
 /** An API failure that retrying won't fix (bad key, unknown model...). The game is aborted. */
@@ -180,6 +202,9 @@ export class FatalPlayerError extends Error {}
 
 /** The API account has no funds left. The game is paused so it can be resumed after topping up. */
 export class OutOfFundsError extends FatalPlayerError {}
+
+/** The model doesn't take the reasoning effort asked for. The player asks again with a lower one, or none. */
+export class EffortRejectedError extends FatalPlayerError {}
 
 /** A failure that may go away on retry (rate limit, overload, network). Retried on the player's clock. */
 export class TransientPlayerError extends Error {}

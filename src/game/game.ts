@@ -21,6 +21,7 @@ import {
   type PlayerReply,
   type PlayerSpec,
   type Termination,
+  type TournamentGame,
   type TurnInfo,
 } from "./types.js";
 
@@ -31,6 +32,7 @@ export interface NewGame {
   black: PlayerSpec;
   colorsAssigned: "manual" | "random";
   startFen?: string;
+  tournament?: TournamentGame;
 }
 
 export interface GameOptions {
@@ -75,6 +77,7 @@ export function createGameRecord(setup: NewGame): GameRecord {
     lastDrawOfferBy: null,
     result: "*",
     termination: null,
+    ...(setup.tournament ? { tournament: setup.tournament } : {}),
   };
 }
 
@@ -121,6 +124,11 @@ export class GameRunner {
     this.notesInPrompt = options.notesInPrompt ?? 3;
     this.chess = new Chess(record.startFen);
     for (const move of record.moves) this.chess.move(move.uci);
+    // The effort each player will ask for, until its first reply says which it got.
+    for (const color of ["white", "black"] as const) {
+      const effort = players[color].effortFor?.(record.timeControl.category);
+      if (effort !== undefined) record.effort = { ...record.effort, [color]: effort };
+    }
   }
 
   get sideToMove(): Color {
@@ -213,6 +221,7 @@ export class GameRunner {
         turnSpend = addSpend(turnSpend, reply.spend);
         this.record.spend[color] = addSpend(this.record.spend[color], reply.spend);
       }
+      if (reply.effort !== undefined) this.record.effort = { ...this.record.effort, [color]: reply.effort };
       if (remaining() <= 0) return this.flag(color);
 
       const rejectReply = (reason: string): boolean => {
@@ -435,6 +444,7 @@ export class GameRunner {
 
   private turnInfo(color: Color, remainingMs: number, feedback: string | undefined): TurnInfo {
     const own = this.record.moves.filter((m) => m.color === color && m.reasoning);
+    const lastMove = this.record.moves.filter((m) => m.color === color).at(-1);
     return {
       color,
       fen: this.chess.fen(),
@@ -445,6 +455,7 @@ export class GameRunner {
       timeControl: this.record.timeControl,
       myClockMs: Math.max(0, remainingMs),
       opponentClockMs: this.record.clocks[opponent(color)],
+      ...(lastMove ? { myLastMoveMs: lastMove.thinkingMs } : {}),
       drawOffered: this.record.pendingDrawOffer === opponent(color),
       canOfferDraw: this.record.lastDrawOfferBy !== color,
       illegalMovesSoFar: this.record.illegalMoves[color],

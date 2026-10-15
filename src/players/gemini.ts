@@ -1,4 +1,4 @@
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
+import { EffortRejectedError, FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -8,8 +8,6 @@ export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta
 export interface GeminiModelOptions {
   model: string;
   apiKey: string;
-  /** thinkingLevel (minimal | low | medium | high) for Gemini 3 and later; omitted means the model's default. */
-  effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
   baseURL?: string;
@@ -44,8 +42,9 @@ interface GeminiErrorBody {
 export class GeminiModel implements ModelClient {
   constructor(private readonly options: GeminiModelOptions) {}
 
-  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
-    const { model, effort } = this.options;
+  /** `effort`: thinkingLevel (minimal | low | medium | high) for Gemini 3 and later; omitted means the model's default. */
+  async complete({ system, user, effort }: ModelRequest): Promise<ModelResponse> {
+    const { model } = this.options;
     // Gemini 2.5 rejects thinkingLevel (it takes a token budget instead), so it keeps its default there.
     const thinking = effort && !/^gemini-2\./.test(geminiModelId(model)) ? { thinkingConfig: { thinkingLevel: effort.toUpperCase() } } : {};
     const body = {
@@ -125,5 +124,7 @@ export function classifyGeminiError(status: number, body: GeminiErrorBody | unde
     return new OutOfFundsError(detail);
   }
   if (status === 408 || status === 429 || status >= 500) return new TransientPlayerError(detail);
+  // A thinking level the model doesn't take.
+  if (status === 400 && /thinking/i.test(error?.message ?? "")) return new EffortRejectedError(detail);
   return new FatalPlayerError(detail);
 }

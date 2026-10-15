@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
+import { EffortRejectedError, FatalPlayerError, OutOfFundsError, TransientPlayerError } from "../game/types.js";
 import type { Usage } from "../pricing.js";
 import type { ModelClient, ModelRequest, ModelResponse } from "./llmPlayer.js";
 import { DECISION_SCHEMA } from "./prompt.js";
@@ -9,8 +9,6 @@ type Effort = NonNullable<NonNullable<Anthropic.MessageCreateParams["output_conf
 export interface AnthropicModelOptions {
   model: string;
   apiKey: string;
-  /** low | medium | high | xhigh | max; omitted means the model's default. */
-  effort?: string;
   /** For tests. */
   fetch?: typeof fetch;
   baseURL?: string;
@@ -36,7 +34,8 @@ export class AnthropicModel implements ModelClient {
     });
   }
 
-  async complete({ system, user }: ModelRequest): Promise<ModelResponse> {
+  /** `effort`: low | medium | high | xhigh | max, as the model allows; omitted means its default. */
+  async complete({ system, user, effort }: ModelRequest): Promise<ModelResponse> {
     try {
       const stream = this.client.messages.stream({
         model: this.options.model,
@@ -45,7 +44,7 @@ export class AnthropicModel implements ModelClient {
         messages: [{ role: "user", content: user }],
         output_config: {
           format: { type: "json_schema", schema: DECISION_SCHEMA },
-          ...(this.options.effort ? { effort: this.options.effort as Effort } : {}),
+          ...(effort ? { effort: effort as Effort } : {}),
         },
       });
       const message = await stream.finalMessage();
@@ -82,6 +81,7 @@ export function classifyAnthropicError(err: unknown): unknown {
       return new OutOfFundsError(detail);
     }
     if (status === 408 || status === 409 || status === 429 || status >= 500) return new TransientPlayerError(detail);
+    if (status === 400 && /effort/i.test(detail)) return new EffortRejectedError(detail);
     return new FatalPlayerError(detail);
   }
   return err;

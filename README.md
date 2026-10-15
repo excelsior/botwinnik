@@ -6,7 +6,8 @@ model for its moves, runs the clocks, enforces the rules, saves the game with
 the reasoning the models give for their moves, and exports it as PGN. Games
 can be imported from PGN too, and a game exported while paused can be resumed
 after importing it. Each model has an Elo rating for bullet, blitz, rapid and
-classical that moves with every finished game.
+classical that moves with every finished game. Models can also meet in
+round-robin tournaments, whose games count for the ratings like any other.
 
 ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API) and Grok
 (xAI API) are supported.
@@ -32,7 +33,7 @@ example Claude vs Claude). Keys come from
 [openai]
 api_key = sk-...
 models = gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna   ; listed first in the setup form
-effort =                                           ; optional reasoning effort
+effort =                                           ; by time category, see below
 
 [anthropic]
 api_key = sk-ant-...
@@ -55,6 +56,21 @@ port = 3000
 games_dir = games
 ```
 
+`effort` sets how hard the models think, by the game's time category. Left
+empty, it is `low` for bullet, `medium` for blitz, `high` for rapid and `max`
+for classical, so the faster the game, the faster the moves. `max` means the
+highest level the API has (OpenAI's `xhigh`, Gemini's and Grok's `high`). One
+level (say `effort = low`) applies to every game; four, comma-separated, set
+bullet, blitz, rapid and classical (`effort = low, low, medium, high`), and
+`default` leaves a category to the model's own default. The levels are each
+API's own: `none`, `minimal`, `low`, `medium`, `high` and `xhigh` for OpenAI;
+`low`, `medium`, `high`, `xhigh` and `max` for Claude; `minimal`, `low`,
+`medium` and `high` for Gemini 3 and later (Gemini 2.5 ignores it); `low`,
+`medium` and `high` for Grok. Not every model takes every level: when the API
+turns one down, the player asks again a level lower, down to `low`, and then
+with no effort at all. Each model's turned-down levels are remembered until
+the app restarts, so that costs a quick extra request once.
+
 The setup form suggests every model each key can use, fetched from the
 provider's API (OpenAI's, Google's and xAI's lists are narrowed to chat models
 that support structured outputs), with the `models` from `config.ini` that the key can use
@@ -67,6 +83,8 @@ elsewhere.
 
 **Web page** (`npm start`): start a game and watch it live with the board,
 both clocks, the material each side has captured and each move's reasoning.
+Under each player's name is the reasoning effort its moves are asked at
+("default effort" when none is sent; see `effort` under Setup).
 The page fits the window: the board takes the height it has, and the move list
 scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
@@ -124,14 +142,21 @@ can be left out when the name starts with `claude`, `gpt`, `gemini` or `grok`.
   move loses the game. A reply with no usable move at all (unreadable, a
   refusal, accepting a draw nobody offered) is asked for again without
   penalty, but three in a row within one turn count as an illegal move.
-- **Categories** follow FIDE, based on the time for a 60-move game
-  (base + 60 × increment): up to 10 minutes is blitz (under 3 is bullet),
-  under 60 minutes is rapid, 60 minutes or more is classical. So `30+30`
-  and `60+0` are classical, `15+10` is rapid.
+- **Categories** are based on the time for a 60-move game (base + 60 ×
+  increment), as FIDE does: under 10 minutes is blitz (under 3 is bullet),
+  under 60 minutes is rapid, 60 minutes or more is classical. So `10+0` and
+  `15+10` are rapid, `30+30` and `60+0` classical.
 - **What players see** each turn: the position (FEN and a diagram), the moves
   so far, both clocks, any pending draw offer, whether they may offer a draw,
   their illegal-move count, and their own last few explanations. They do not
   get a list of legal moves, and never see the opponent's reasoning.
+- **Time management:** the prompt tells players that the clock is part of the
+  game, to play routine moves fast and keep time for critical positions. Each
+  turn says how long their previous move took and suggests a time for this
+  one: the time left spread over the moves still likely to come (35 at the
+  start, never fewer than 10), plus the increment. Under a minute (or a fifth
+  of the base time, if less), they are told they are low on time. How hard
+  they think also follows the time category (see `effort` under Setup).
 - **API errors:** temporary ones (rate limits, overload, network) are retried
   on the player's clock. Errors that retrying can't fix (bad key, unknown
   model) abort the game without a result.
@@ -195,8 +220,8 @@ unknown.
 Every model has a separate Elo rating for each time control category:
 bullet, blitz, rapid and classical. A game's category comes from its base
 time plus 60 increments (the time for a 60-move game): under 3 minutes is
-bullet, up to 10 minutes blitz, under 60 minutes rapid, and 60 minutes or more
-classical. 5+3 is blitz, 10+5 rapid and 90+30 classical.
+bullet, under 10 minutes blitz, under 60 minutes rapid, and 60 minutes or more
+classical. 5+3 is blitz, 10+0 rapid and 90+30 classical.
 
 Each rating starts at 1500. Each finished game moves its players' ratings in
 its category by K × (score − expected score), with K = 32 and the expected
@@ -214,6 +239,35 @@ into the game as `WhiteElo` and `BlackElo`.
 Ratings are worked out again from the saved games whenever they're needed,
 so they stay right when games are imported or game files are deleted. An
 imported game that is already over counts as of when it was imported.
+
+## Tournaments
+
+The **Tournaments** tab of the page runs round-robins. The admin names the
+tournament (optional), picks a time control and adds at least three different
+models (at most 20), and every model plays every other once. With an odd
+number of models one of them rests each round, a different one each time. The
+pairing numbers are drawn at random and the schedule follows FIDE's Berger
+tables, so colors alternate from round to round: each model gets as many
+Whites as Blacks, or one more of either when the number of models is even.
+
+All the games of a round are played at the same time, and the next round
+starts once every one of them is over. A paused game holds its round until it
+is resumed (or aborted). An aborted game scores for nobody and the tournament
+goes on without it. **Abort tournament** aborts the games in progress and
+plays no more rounds.
+
+Each tournament's page shows the standings (1 point for a win, ½ for a draw,
+ties broken by Sonneborn-Berger and then by wins), each model's rating in the
+tournament's time category with what the tournament's games did to it, and
+every round's games, ongoing or finished, each linking to its game page. The
+games are ordinary games otherwise: they are listed with the others, count for
+the ratings, and their PGN carries the tournament's name and round in the
+`Event` and `Round` tags.
+
+If the app stops while a tournament runs, the tournament carries on when it
+starts again. The games the stop cut off come back paused (see above) and hold
+their round until they are resumed. Tournaments are saved as
+`games/tournaments/<id>.json`.
 
 ## Saved games and PGN
 
@@ -252,6 +306,9 @@ npm run typecheck
 the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini
 and xAI clients;
 `src/server` the admin API; `public/` the web page.
+
+`src/tournament` holds the round-robin schedule, the standings and the
+tournament service, which runs tournaments on top of the game service.
 
 ### Dev container
 

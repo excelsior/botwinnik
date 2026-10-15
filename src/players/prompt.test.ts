@@ -35,6 +35,7 @@ describe("prompts", () => {
     assert.match(text, /gets 1 minute of extra time\. A second illegal move loses/);
     assert.match(text, /can't offer another until your opponent has offered one/);
     assert.match(text, /threefold repetition/);
+    assert.match(text, /Managing your clock is part of the game/);
   });
 
   it("gives the position, history and both clocks", () => {
@@ -43,8 +44,17 @@ describe("prompts", () => {
     assert.match(text, /Position \(FEN\): rnbqkbnr\/pppppppp\/8\/8\/4P3\/8\/PPPP1PPP\/RNBQKBNR b KQkq - 0 1/);
     assert.match(text, /Moves so far: 1\. e4/);
     assert.match(text, /Your clock: 4:47 left \(\+3s after each move\)\. White's clock: 5:01\./);
+    assert.match(text, /Suggested time for this move: about 11 seconds\./); // 4:47 over 34.5 moves, plus 3s
+    assert.doesNotMatch(text, /previous move took|low on time/);
     assert.match(text, /You may offer a draw/);
     assert.doesNotMatch(text, /IMPORTANT/);
+  });
+
+  it("says how long the previous move took, and warns when time runs low", () => {
+    const text = turnPrompt(turn({ moveNumber: 30, myClockMs: 50_000, myLastMoveMs: 102_000 }));
+    assert.match(text, /Your previous move took 1:42\./);
+    assert.match(text, /Suggested time for this move: about 6 seconds\./); // 50s over 20 moves, plus 3s
+    assert.match(text, /You are low on time: play fast/);
   });
 
   it("mentions pending offers, draw-offer limits, illegal moves, notes and feedback", () => {

@@ -1,6 +1,6 @@
 import { formatMoveList } from "../game/moves.js";
 import { colorName, opponent, type Color, type Decision, type PlayerReply, type TurnInfo } from "../game/types.js";
-import { describeDuration, formatClock } from "../timeControl.js";
+import { describeDuration, describeRoughly, formatClock, moveTimeBudgetMs } from "../timeControl.js";
 
 /** JSON Schema for a player's reply; usable with both OpenAI strict mode and Claude structured outputs. */
 export const DECISION_SCHEMA: Record<string, unknown> = {
@@ -45,6 +45,11 @@ export function systemPrompt(color: Color, timeControl: TurnInfo["timeControl"])
     "- You may offer a draw together with a move. Your opponent accepts it or declines it on their next turn. Once you have offered a draw, you can't offer another until your opponent has offered one.",
     "- You may resign instead of moving.",
     "",
+    "Managing your clock is part of the game:",
+    "- Every second you spend thinking comes off your clock, and running out of time loses the game however good your position is. A strong move played after your time has run out is worth nothing.",
+    "- Play routine moves quickly (well-known opening moves, recaptures, the only sensible reply) and save your time for the critical positions.",
+    "- Each turn tells you how long your previous move took and suggests a time for this one, worked out from your clock and the moves still to come. Stay close to it unless the position really needs more.",
+    "",
     "Each turn you get the position, the moves so far, both clocks and any pending draw offer. Reply with a JSON object:",
     '- "reasoning": one to three sentences explaining the idea behind your choice (for example: grabbing the center, putting pressure on f2, building a battery). Your opponent does not see it.',
     '- "action": "move", "resign", or "accept_draw" (only when your opponent has offered a draw).',
@@ -66,6 +71,12 @@ export function turnPrompt(turn: TurnInfo): string {
   lines.push("");
   const inc = turn.timeControl.incrementMs ? ` (+${turn.timeControl.incrementMs / 1000}s after each move)` : "";
   lines.push(`Your clock: ${formatClock(turn.myClockMs)} left${inc}. ${them}'s clock: ${formatClock(turn.opponentClockMs)}.`);
+  if (turn.myLastMoveMs !== undefined) lines.push(`Your previous move took ${formatClock(turn.myLastMoveMs)}.`);
+  const budgetMs = moveTimeBudgetMs(turn.myClockMs, turn.timeControl.incrementMs, turn.moveNumber);
+  lines.push(`Suggested time for this move: about ${describeRoughly(budgetMs)}.`);
+  if (turn.myClockMs < Math.min(60_000, turn.timeControl.baseMs / 5)) {
+    lines.push("You are low on time: play fast, or you will lose on time.");
+  }
   if (turn.drawOffered) {
     lines.push(`${them} has offered a draw. Reply with action "accept_draw" to accept it, or make a move to decline.`);
   }

@@ -10,6 +10,7 @@ import type { GameRecord } from "./game/types.js";
 import { playerFactory } from "./players/llmPlayer.js";
 import { canPlay, listModels } from "./players/models.js";
 import { createServer } from "./server/server.js";
+import { TournamentService } from "./tournament/service.js";
 import { formatClock, TIME_CATEGORIES, type TimeCategory } from "./timeControl.js";
 import { formatUsd } from "./pricing.js";
 
@@ -127,10 +128,15 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
   const interrupted = service.recoverInterrupted();
   if (interrupted) console.log(`Paused ${interrupted} game(s) the app stopped in the middle of; resume them on their pages or with botwinnik resume <id>.`);
   const loopbackOnly = ["127.0.0.1", "localhost", "::1"].includes(config.host);
+  // After the games' recovery, so a game the stop cut off already shows how it came out of it.
+  const tournaments = new TournamentService(service);
+  const carriedOn = tournaments.resumeRunning();
+  if (carriedOn) console.log(`Carrying on with ${carriedOn} tournament(s).`);
   const server = createServer(service, {
     providers: config.providers,
     loopbackOnly,
     listModels: (provider) => listModels(provider, config.providers[provider]!.apiKey),
+    tournaments,
   });
   return new Promise((resolve, reject) => {
     server.on("error", reject);
