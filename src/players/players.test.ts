@@ -8,6 +8,7 @@ import { GeminiModel } from "./gemini.js";
 import { LlmPlayer, type ModelClient, type ModelRequest } from "./llmPlayer.js";
 import { OpenAIModel } from "./openai.js";
 import { XaiModel } from "./xai.js";
+import { YandexModel } from "./yandex.js";
 
 const DECISION = { reasoning: "Fighting for the center.", action: "move", move: "e5", offer_draw: false };
 
@@ -438,6 +439,90 @@ describe("Grok player", () => {
     await assert.rejects(call(), (err: Error) => err instanceof OutOfFundsError && /429: Your team has reached its monthly spending limit/.test(err.message));
     await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError) && /does not exist/.test(err.message));
     await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && /401: Incorrect API key/.test(err.message));
+  });
+});
+
+function yandexResponse(content: string | null, extra: Record<string, unknown> = {}): Response {
+  const body = {
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    created: 0,
+    model: "gpt://b1gfolder/aliceai-llm",
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1300, completion_tokens: 460, total_tokens: 1760 },
+    ...extra,
+  };
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+describe("Yandex player", () => {
+  it("uses Yandex AI Studio's Chat Completions API with the folder's model URI and a strict JSON schema", async () => {
+    const fake = fakeFetch([() => yandexResponse(JSON.stringify(DECISION))]);
+    const model = new YandexModel({ model: "aliceai-llm", apiKey: "AQVN-test", folderId: "b1gfolder", fetch: fake.fn });
+    const effort = { bullet: "low", blitz: "medium", rapid: "high", classical: "max" };
+    const player = new LlmPlayer({ provider: "yandex", model: "aliceai-llm" }, model, { input: 2, output: 8 }, effort);
+    const reply = await player.decide(turn("90+30"));
+    assert.deepEqual(reply, {
+      ok: true,
+      decision: { action: "move", move: "e5", offerDraw: false, reasoning: "Fighting for the center." },
+      spend: { calls: 1, inputTokens: 1300, cachedInputTokens: 0, outputTokens: 460, costUsd: (1300 * 2 + 460 * 8) / 1e6 },
+      effort: "high",
+    });
+    const { url, body, headers } = fake.requests[0];
+    assert.equal(url, "https://llm.api.cloud.yandex.net/v1/chat/completions");
+    assert.equal(headers.get("authorization"), "Bearer AQVN-test");
+    assert.equal(headers.get("openai-project"), "b1gfolder");
+    assert.equal(body.model, "gpt://b1gfolder/aliceai-llm");
+    assert.equal(body.response_format.type, "json_schema");
+    assert.equal(body.response_format.json_schema.strict, true);
+    assert.deepEqual(body.response_format.json_schema.schema.required, ["reasoning", "action", "move", "offer_draw"]);
+    assert.equal(body.reasoning_effort, "high", "Yandex's highest level");
+    assert.equal(body.messages[0].role, "system");
+    assert.match(body.messages[1].content, /Moves so far: 1\. e4/);
+  });
+
+  it("takes a whole model URI as it is, and counts reasoning tokens left out of completion_tokens", async () => {
+    const fake = fakeFetch([() => yandexResponse(JSON.stringify(DECISION), { usage: { prompt_tokens: 1300, completion_tokens: 60, total_tokens: 1760 } })]);
+    const model = new YandexModel({ model: "gpt://b1gother/yandexgpt-5.1", apiKey: "k", folderId: "b1gfolder", fetch: fake.fn });
+    const response = await model.complete({ system: "s", user: "u" });
+    assert.equal(response.usage?.outputTokens, 460);
+    assert.equal(fake.requests[0].body.model, "gpt://b1gother/yandexgpt-5.1");
+    assert.equal(fake.requests[0].body.reasoning_effort, undefined);
+  });
+
+  it("reports cut-off, filtered and empty replies", async () => {
+    const fake = fakeFetch([
+      () => yandexResponse('{"reasoning": "', { choices: [{ index: 0, message: { role: "assistant", content: '{"reasoning": "' }, finish_reason: "length" }] }),
+      () => yandexResponse("", { choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "content_filter" }] }),
+      () => yandexResponse(""),
+    ]);
+    const model = new YandexModel({ model: "yandexgpt-5.1", apiKey: "k", folderId: "f", fetch: fake.fn });
+    const problems = [];
+    for (let i = 0; i < 3; i++) {
+      const response = await model.complete({ system: "s", user: "u" });
+      problems.push("problem" in response ? response.problem : "ok");
+    }
+    assert.deepEqual(problems, ["the reply was cut off by the token limit", "the reply was blocked by a content filter", "the reply was empty"]);
+  });
+
+  it("classifies API errors, recognizing a billing problem", async () => {
+    const yandexError = (httpCode: number, message: string) => () => errorResponse(httpCode, { error: { grpcCode: 7, httpCode, message, httpStatus: "Forbidden", details: [] } });
+    const fake = fakeFetch([
+      yandexError(403, "Billing account is not active"),
+      yandexError(403, "Permission denied to folder b1gfolder"),
+      yandexError(401, "Unknown api key 'AQVN***'"),
+      yandexError(400, "reasoning_effort is not supported for this model"),
+    ]);
+    const model = new YandexModel({ model: "aliceai-llm", apiKey: "k", folderId: "b1gfolder", fetch: fake.fn });
+    const call = () => model.complete({ system: "s", user: "u", effort: "high" });
+    await assert.rejects(call(), (err: Error) => {
+      assert.ok(err instanceof OutOfFundsError);
+      assert.equal(err.message, "Yandex AI Studio API error 403: Billing account is not active");
+      return true;
+    });
+    await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && !(err instanceof OutOfFundsError) && /Permission denied/.test(err.message));
+    await assert.rejects(call(), (err: Error) => err instanceof FatalPlayerError && /401: Unknown api key/.test(err.message));
+    await assert.rejects(call(), EffortRejectedError);
   });
 });
 

@@ -3,7 +3,7 @@ import path from "node:path";
 import { parseEffort, type EffortByCategory } from "./players/effort.js";
 import type { ModelPrice } from "./pricing.js";
 
-export const PROVIDERS = ["openai", "anthropic", "google", "xai"] as const;
+export const PROVIDERS = ["openai", "anthropic", "google", "xai", "yandex"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
@@ -11,10 +11,16 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Claude (Anthropic)",
   google: "Gemini (Google)",
   xai: "Grok (xAI)",
+  yandex: "Alice AI (Yandex)",
 };
 
-export interface ProviderConfig {
+export interface Credentials {
   apiKey: string;
+  /** Yandex only: the Yandex Cloud folder the models are called in. */
+  folderId?: string;
+}
+
+export interface ProviderConfig extends Credentials {
   /** Models suggested in the setup form. Any other model ID can still be used. */
   models: string[];
   /** Reasoning effort for each time category; undefined leaves it to the model's default. */
@@ -36,6 +42,7 @@ export const DEFAULT_MODELS: Record<Provider, string[]> = {
   anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   google: ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
   xai: ["grok-4.7", "grok-4.6", "grok-4.3"],
+  yandex: ["aliceai-llm", "aliceai-llm-flash", "yandexgpt-5.1"],
 };
 
 export type IniData = Record<string, Record<string, string>>;
@@ -84,9 +91,14 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     const section = ini[provider] ?? {};
     const apiKey = section.api_key?.trim();
     if (!apiKey) continue;
+    const folderId = section.folder_id?.trim();
+    if (provider === "yandex" && !folderId) {
+      throw new ConfigError("[yandex] needs folder_id next to api_key: the ID of the Yandex Cloud folder the key's service account is in (b1g...).");
+    }
     const models = list(section.models);
     providers[provider] = {
       apiKey,
+      ...(folderId ? { folderId } : {}),
       models: models.length ? models : DEFAULT_MODELS[provider],
       effort: effortSetting(provider, section.effort),
     };
@@ -147,13 +159,18 @@ export function loadConfig(file = defaultConfigPath()): AppConfig {
   return configFromIni(parseIni(readFileSync(file, "utf8")), path.dirname(file));
 }
 
-/** Guesses the provider from a model ID: claude-... is Anthropic's, gpt-... OpenAI's, gemini-... Google's, grok-... xAI's. */
+/**
+ * Guesses the provider from a model ID: claude-... is Anthropic's, gpt-...
+ * OpenAI's, gemini-... Google's, grok-... xAI's, aliceai-... and yandexgpt...
+ * Yandex's.
+ */
 export function inferProvider(model: string): Provider | undefined {
   const m = model.toLowerCase().replace(/^models\//, "");
   if (m.startsWith("claude")) return "anthropic";
   if (m.startsWith("gpt") || m.startsWith("chatgpt") || /^o\d/.test(m)) return "openai";
   if (m.startsWith("gemini")) return "google";
   if (m.startsWith("grok")) return "xai";
+  if (m.startsWith("aliceai") || m.startsWith("yandexgpt")) return "yandex";
   return undefined;
 }
 
@@ -167,6 +184,9 @@ const PROVIDER_ALIASES: Record<string, Provider> = {
   gemini: "google",
   xai: "xai",
   grok: "xai",
+  yandex: "yandex",
+  alice: "yandex",
+  yandexgpt: "yandex",
 };
 
 /** Parses "provider:model" (provider optional when it can be inferred from the model ID). */

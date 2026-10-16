@@ -1,11 +1,12 @@
 // The models each API key can use, from the providers' list-models endpoints.
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import type { Provider } from "../config.js";
+import type { Credentials, Provider } from "../config.js";
 import { classifyAnthropicError } from "./anthropic.js";
 import { geminiModelId, geminiRequest } from "./gemini.js";
 import { classifyOpenAIError } from "./openai.js";
 import { classifyXaiError, XAI_BASE_URL } from "./xai.js";
+import { classifyYandexError, YANDEX_BASE_URL, yandexModelId } from "./yandex.js";
 
 export interface ModelOption {
   id: string;
@@ -20,8 +21,8 @@ export interface ListModelsOptions {
   timeoutMs?: number;
 }
 
-/** Every model the key can use, newest first. */
-export async function listModels(provider: Provider, apiKey: string, options: ListModelsOptions = {}): Promise<ModelOption[]> {
+/** Every model the key can use, newest first (Yandex's in the order its API gives). */
+export async function listModels(provider: Provider, { apiKey, folderId = "" }: Credentials, options: ListModelsOptions = {}): Promise<ModelOption[]> {
   // Short and without retries: the setup form waits for this.
   const clientOptions = {
     apiKey,
@@ -45,6 +46,17 @@ export async function listModels(provider: Provider, apiKey: string, options: Li
     }
   }
   if (provider === "google") return listGeminiModels(apiKey, options);
+  if (provider === "yandex") {
+    try {
+      const client = new OpenAI({ ...clientOptions, project: folderId, baseURL: options.baseURL ?? YANDEX_BASE_URL });
+      const ids = new Set<string>();
+      // Text models are gpt://...; embeddings, classifiers and image models have other schemes.
+      for await (const m of client.models.list()) if (m.id.startsWith("gpt://")) ids.add(yandexModelId(folderId, m.id));
+      return [...ids].map((id) => ({ id }));
+    } catch (err) {
+      throw classifyYandexError(err);
+    }
+  }
   const xai = provider === "xai";
   try {
     const models: OpenAI.Models.Model[] = [];
@@ -88,10 +100,11 @@ function versionOf(id: string): number {
  * Whether a model from the list can play: OpenAI, Google and xAI list
  * embedding, image, audio and other models next to the chat ones, and older
  * chat models lack structured outputs. A guess from the name, so any ID can
- * still be typed in.
+ * still be typed in. Anthropic's list and Yandex's text models are all chat
+ * models.
  */
 export function canPlay(provider: Provider, id: string): boolean {
-  if (provider === "anthropic") return true;
+  if (provider === "anthropic" || provider === "yandex") return true;
   if (provider === "google") {
     // 2.5 and later take a JSON schema; "gemini-flash-latest" and the like point at current ones.
     const current = versionOf(id) >= 2.5 || /^gemini-(pro|flash)/.test(id);
