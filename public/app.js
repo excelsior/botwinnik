@@ -99,6 +99,23 @@ function formatUsd(usd) {
   return usd < 0.1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
+/** "87.3%". */
+function formatAccuracy(accuracy) {
+  return `${accuracy.toFixed(1)}%`;
+}
+
+/** "1 inaccuracy", "2 mistakes". */
+function count(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** An evaluation from White's side in words: "+1.3", "White mates in 3", "checkmate". */
+function describeEval(evaluation) {
+  if (evaluation.mate === 0) return "checkmate";
+  if (evaluation.mate !== undefined) return `${evaluation.mate > 0 ? "White" : "Black"} mates in ${Math.abs(evaluation.mate)}`;
+  return evalLabel(evaluation);
+}
+
 /** Mentions a call the game stopped waiting for whose cost isn't in yet. */
 function unfinishedNote(game) {
   if (!game.unfinishedCall) return "";
@@ -163,6 +180,7 @@ async function showHome() {
   );
 
   let ratedGames = null; // the finished games the ratings shown were worked out from
+  let analyzing = false; // whether Stockfish was still analyzing games, so the accuracy shown can change
   const refresh = async () => {
     let games;
     try {
@@ -172,12 +190,14 @@ async function showHome() {
       gamesSection.replaceChildren(h("h2", {}, "Games"), h("p", { class: "error" }, err.message));
       return;
     }
-    // Ratings only change when a game finishes.
+    // Ratings only change when a game finishes, and accuracy when Stockfish has analyzed one.
     const finished = games.filter((g) => g.status === "finished").map((g) => g.id).join();
-    if (finished === ratedGames) return;
+    if (finished === ratedGames && !analyzing) return;
     try {
-      ratingsSection.replaceChildren(...ratingsCard(await api("/ratings")));
+      const ratings = await api("/ratings");
+      ratingsSection.replaceChildren(...ratingsCard(ratings));
       ratedGames = finished;
+      analyzing = (ratings.analysis?.pending ?? 0) > 0;
     } catch (err) {
       ratingsSection.replaceChildren(h("h2", {}, "Ratings"), h("p", { class: "error" }, err.message));
     }
@@ -466,7 +486,7 @@ const RATINGS_TAB_SETTING = "botwinnik.ratingsTab";
  * The ratings card's contents: a tab per time category, each with its own
  * table. `categories` maps bullet, blitz, rapid and classical to their models.
  */
-function ratingsCard({ start, k, categories }) {
+function ratingsCard({ start, k, categories, analysis }) {
   const order = Object.keys(categories);
   const gamesIn = (c) => categories[c].reduce((sum, m) => sum + m.games, 0) / 2;
   if (!order.some(gamesIn)) {
@@ -509,11 +529,14 @@ function ratingsCard({ start, k, categories }) {
     panel.setAttribute("aria-labelledby", `ratings-tab-${c}`);
     panel.replaceChildren(
       categories[c].length
-        ? ratingsTable(categories[c])
+        ? ratingsTable(categories[c], analysis)
         : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
     );
   };
   select(current);
+  const pending = analysis?.pending
+    ? ` Stockfish is analyzing ${count(analysis.pending, "more game", "more games")}, so these can still change.`
+    : "";
 
   return [
     h("div", { class: "card-head" }, h("h2", {}, "Ratings"), h("div", { class: "chips tabs", role: "tablist", "aria-label": "Time control" }, tabs)),
@@ -523,12 +546,22 @@ function ratingsCard({ start, k, categories }) {
       { class: "muted note" },
       `Elo ratings from finished games, in the order they ended, kept separately for each time control. ` +
         `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, under 10 blitz, under 60 rapid, and 60 or more classical. ` +
-        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
+        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count. ` +
+        `Accuracy (0 to 100%, worked out as Lichess does from Stockfish's evaluations) is averaged over the model's finished games in this time control that Stockfish has analyzed.${pending}`,
     ),
   ];
 }
 
-function ratingsTable(models) {
+/** An average accuracy cell: "87.3%", or a dash before any game has been analyzed. */
+function accuracyCell(average, analysis, where) {
+  if (!average) {
+    const why = analysis ? `None of its ${where} has been analyzed yet` : "Stockfish analysis is turned off in config.ini";
+    return h("td", { class: "num muted", title: why }, "–");
+  }
+  return h("td", { class: "num", title: `Average over ${count(average.games, "analyzed game", "analyzed games")}` }, formatAccuracy(average.accuracy));
+}
+
+function ratingsTable(models, analysis) {
   const num = (value) => h("td", { class: "num" }, value);
   return h(
     "div",
@@ -544,7 +577,7 @@ function ratingsTable(models) {
           {},
           h("th", { class: "num" }, "#"),
           h("th", {}, "Model"),
-          ["Rating", "Games", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
+          ["Rating", "Games", "Won", "Drawn", "Lost", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
         ),
       ),
       h(
@@ -561,6 +594,7 @@ function ratingsTable(models) {
             num(m.wins),
             num(m.draws),
             num(m.losses),
+            accuracyCell(m.accuracy, analysis, "finished games in this time control"),
           ),
         ),
       ),
@@ -958,7 +992,7 @@ function showTournament(id) {
   const timer = setInterval(refresh, 5000);
   cleanup = () => clearInterval(timer);
 
-  function render({ tournament: t, round, standings, games }) {
+  function render({ tournament: t, round, standings, games, analysis }) {
     title.textContent = t.name;
     document.title = `${t.name} · Botwinnik`;
     const cost = sumCost(Object.values(games));
@@ -996,11 +1030,12 @@ function showTournament(id) {
     setChildren(
       standingsCard,
       h("h2", {}, "Standings"),
-      standingsTable(standings, t.timeControl.category),
+      standingsTable(standings, t.timeControl.category, analysis),
       h(
         "p",
         { class: "muted note" },
         `A win scores 1 and a draw ½; aborted games count for nobody. Ties are broken by Sonneborn-Berger (SB: the points of the models a model beat, plus half the points of those it drew with), then by wins. ` +
+          `Accuracy (0 to 100%, worked out as Lichess does from Stockfish's evaluations) is averaged over the model's finished games in this tournament that Stockfish has analyzed. ` +
           `Rating is the model's ${t.timeControl.category} rating now, with what this tournament's games did to it.`,
       ),
     );
@@ -1032,7 +1067,7 @@ function tournamentState(t, round, standings, games) {
     .join(" ");
 }
 
-function standingsTable(standings, category) {
+function standingsTable(standings, category, analysis) {
   const num = (value) => h("td", { class: "num" }, value);
   // No places until a game has finished.
   const ranked = standings.some((s) => s.played > 0);
@@ -1053,6 +1088,7 @@ function standingsTable(standings, category) {
           h("th", {}, "Model"),
           ["Points", "Played", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
           h("th", { class: "num" }, h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB")),
+          h("th", { class: "num" }, "Accuracy"),
           h("th", { class: "num" }, "Rating"),
         ),
       ),
@@ -1071,6 +1107,7 @@ function standingsTable(standings, category) {
             num(s.draws),
             num(s.losses),
             num(sb(s.tiebreak)),
+            s.played ? accuracyCell(s.accuracy, analysis, "finished games in this tournament") : num(""),
             h(
               "td",
               { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
@@ -1167,6 +1204,7 @@ function showGame(id) {
   let evaluation = null;
   let evalOn = loadSetting(EVAL_SETTING, "on") !== "off";
   let ratings = null; // { white: { before, after? }, black: ... }, or null for an unrated game
+  let analysis = null; // Stockfish's analysis once the game is over: { status, ... }, or null
 
   const boardEl = h("div", { class: "board", role: "img" });
   const evalFill = h("div", { class: "eval-fill" });
@@ -1193,14 +1231,16 @@ function showGame(id) {
     const first = !game;
     game = data.game;
     ratings = data.ratings ?? null;
+    analysis = data.analysis ?? null;
     if (viewPly !== null && viewPly > game.moves.length) viewPly = null;
     if (first) {
       app.replaceChildren(view);
       fitBoard();
     }
     render();
-    // A finished game can still be waiting for a cut-off call's cost.
-    if (game.status !== "running" && !game.unfinishedCall) source.close();
+    // A finished game can still be waiting for a cut-off call's cost, or for Stockfish.
+    const analyzing = analysis?.status === "queued" || analysis?.status === "analyzing";
+    if (game.status !== "running" && !game.unfinishedCall && !analyzing) source.close();
   };
   source.onerror = () => {
     if (!game) {
@@ -1325,6 +1365,21 @@ function showGame(id) {
     return h("span", { class: "effort", title: `Reasoning effort: ${effort}, set by the time control` }, `${effort} effort`);
   }
 
+  /** The player's accuracy, once Stockfish has analyzed the game. */
+  function accuracyTag(color) {
+    const side = analysis?.status === "done" ? analysis[color] : null;
+    if (side?.accuracy === null || side?.accuracy === undefined) return null;
+    const judged = [
+      count(side.inaccuracies, "inaccuracy", "inaccuracies"),
+      count(side.mistakes, "mistake", "mistakes"),
+      count(side.blunders, "blunder", "blunders"),
+    ];
+    const title =
+      `Accuracy ${formatAccuracy(side.accuracy)} over ${count(side.moves, "move", "moves")}, from ${analysis.engine} at depth ${analysis.depth}, ` +
+      `worked out as Lichess does. ${capitalize(listing(judged))}; average centipawn loss ${Math.round(side.acpl)}.`;
+    return h("span", { class: "accuracy", title }, `${formatAccuracy(side.accuracy)} accuracy`);
+  }
+
   function spendBadge(spend) {
     if (!spend) return null;
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
@@ -1343,6 +1398,7 @@ function showGame(id) {
       "div",
       { class: "material", title: taken.length ? `Captured: ${names}` : "" },
       effortTag(color),
+      accuracyTag(color),
       groups,
       lead > 0 ? h("span", { class: "lead" }, `+${lead}`) : null,
     );
@@ -1452,7 +1508,7 @@ function showGame(id) {
       banner.textContent = game.events.findLast((e) => e.type === "paused")?.message ?? "Paused: resume the game to continue it.";
     } else {
       banner.className = `banner ${game.status}`;
-      banner.replaceChildren(h("strong", {}, game.result), " ", game.termination?.message ?? "");
+      setChildren(banner, h("strong", {}, game.result), " ", game.termination?.message ?? "", analysisState());
     }
 
     const shownPly = viewPly ?? game.moves.length;
@@ -1483,6 +1539,32 @@ function showGame(id) {
     );
 
     renderMoves(shownPly);
+  }
+
+  /** Where Stockfish's analysis of the finished game stands, until it's done. */
+  function analysisState() {
+    const text =
+      analysis?.status === "queued"
+        ? "Waiting for Stockfish to analyze this game for the players' accuracy…"
+        : analysis?.status === "analyzing"
+          ? `Stockfish is analyzing this game: ${analysis.progress.done} of ${analysis.progress.total} positions…`
+          : analysis?.status === "failed"
+            ? `Stockfish couldn't analyze this game: ${analysis.error}`
+            : null;
+    return text ? h("span", { class: `analysis-state${analysis.status === "failed" ? " failed" : ""}` }, text) : null;
+  }
+
+  /** Stockfish's verdict on a move: its judgement (?!, ?, ??), and what it would have played. */
+  function moveVerdict(m) {
+    const report = analysis?.status === "done" ? analysis.moves[m.ply - 1] : null;
+    if (!report) return { title: "", mark: null };
+    const chances = `${Math.round(report.winBefore)}% → ${Math.round(report.winAfter)}%`;
+    const best = report.bestSan ? ` Stockfish preferred ${report.bestSan}.` : "";
+    const title = `Stockfish: ${describeEval(report.eval)} after this move. ${capitalize(m.color)}'s winning chances ${chances}, move accuracy ${Math.round(report.accuracy)}%.${best}`;
+    const mark = report.judgement
+      ? h("span", { class: `judgement ${report.judgement}`, title: `${capitalize(report.judgement)}. ${title}` }, JUDGEMENT_MARKS[report.judgement])
+      : null;
+    return { title, mark };
   }
 
   function renderEval(fen) {
@@ -1535,6 +1617,7 @@ function showGame(id) {
       );
     for (const e of game.events.filter((e) => e.ply === 0)) items.push(eventItem(e));
     for (const m of game.moves) {
+      const verdict = moveVerdict(m);
       items.push(
         h(
           "li",
@@ -1548,7 +1631,7 @@ function showGame(id) {
             "div",
             { class: "move-head" },
             h("span", { class: "num" }, `${moveNumberOf(m)}${m.color === "white" ? "." : "…"}`),
-            h("span", { class: "san" }, m.san),
+            h("span", { class: "san", title: verdict.title }, m.san, verdict.mark),
             m.drawOffered ? h("span", { class: "badge" }, "draw offered") : null,
             h(
               "span",
@@ -1588,6 +1671,8 @@ function showGame(id) {
     moveList.scrollTo({ top, behavior: smooth && !REDUCED_MOTION.matches ? "smooth" : "auto" });
   }
 }
+
+const JUDGEMENT_MARKS = { inaccuracy: "?!", mistake: "?", blunder: "??" };
 
 const PIECE_ORDER = ["p", "n", "b", "r", "q"];
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };

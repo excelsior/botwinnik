@@ -1,3 +1,4 @@
+import type { AccuracyAverage } from "../analysis/accuracy.js";
 import type { GameRatings } from "../game/ratings.js";
 import type { GameRecord, PlayerSpec } from "../game/types.js";
 import type { TimeCategory } from "../timeControl.js";
@@ -50,6 +51,8 @@ export interface Standing extends PlayerSpec {
   tiebreak: number;
   /** Its rating in the tournament's time category now, and how much the tournament's games moved it. */
   rating?: { now: number; change: number };
+  /** Its average accuracy over the tournament's games that Stockfish has analyzed. */
+  accuracy?: AccuracyAverage;
 }
 
 /** Whether a pairing's game is over (or gone), so the round can move on. */

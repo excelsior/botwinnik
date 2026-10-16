@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { AnalysisService, playerKey } from "./analysis/service.js";
 import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, PROVIDERS, type AppConfig } from "./config.js";
 import { moveNumberOf } from "./game/game.js";
 import { toPgn } from "./game/pgn.js";
-import { K_FACTOR, START_RATING } from "./game/ratings.js";
+import { K_FACTOR, rateGames, START_RATING } from "./game/ratings.js";
 import { GameService } from "./game/service.js";
 import { gameSpend, GameStore } from "./game/store.js";
 import type { GameRecord } from "./game/types.js";
@@ -39,7 +40,13 @@ const USAGE = `Usage:
   botwinnik ratings [bullet|blitz|rapid|classical]
       Show each model's Elo ratings, one table per time category (or just the
       one given). Every model starts at ${START_RATING} in each category, and each
-      finished game moves its players' ratings (K = ${K_FACTOR}).
+      finished game moves its players' ratings (K = ${K_FACTOR}). Accuracy is the
+      model's average over the games Stockfish has analyzed.
+
+  botwinnik analyze [<game-id>...]
+      Analyze finished games with Stockfish and print each player's accuracy:
+      the ones given (again, if they have been), or else every finished game
+      that hasn't been analyzed yet. "serve" does this by itself.
 
   botwinnik pgn <game-id> [--out file.pgn]
       Export a saved game as PGN (printed, or written to --out).
@@ -74,12 +81,13 @@ async function main(argv: string[]): Promise<number> {
 
   const config = loadConfig(values.config);
   const service = new GameService(new GameStore(config.gamesDir), playerFactory(config));
+  const analysis = new AnalysisService(service, config.analysis);
 
   switch (command) {
     case "serve":
-      return serve(config, service);
+      return serve(config, service, analysis);
     case "play":
-      return play(service, values);
+      return play(service, analysis, values);
     case "resume": {
       const paused = service.get(rest[0] ?? "");
       if (!paused) throw new ConfigError(`No saved game "${rest[0] ?? ""}". Run "botwinnik list" to see the IDs.`);
@@ -87,8 +95,10 @@ async function main(argv: string[]): Promise<number> {
       const [movesBefore, eventsBefore] = [paused.moves.length, paused.events.length];
       const game = service.resume(paused.id);
       console.log(`Resuming game ${game.id}: ${game.white.model} (White) vs ${game.black.model} (Black), ${game.timeControl.label}`);
-      return follow(service, game, movesBefore, eventsBefore);
+      return follow(service, analysis, game, movesBefore, eventsBefore);
     }
+    case "analyze":
+      return analyzeGames(service, analysis, rest);
     case "models":
       return printModels(config);
     case "list":
@@ -110,7 +120,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "ratings":
-      return printRatings(service, rest[0]);
+      return printRatings(service, analysis, rest[0]);
     case "import": {
       if (!rest[0]) throw new ConfigError("Give the PGN file to import: botwinnik import game.pgn");
       const game = service.importPgn(readFileSync(rest[0], "utf8"));
@@ -125,12 +135,14 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-function serve(config: AppConfig, service: GameService): Promise<number> {
+function serve(config: AppConfig, service: GameService, analysis: AnalysisService): Promise<number> {
   const interrupted = service.recoverInterrupted();
   if (interrupted) console.log(`Paused ${interrupted} game(s) the app stopped in the middle of; resume them on their pages or with botwinnik resume <id>.`);
   const loopbackOnly = ["127.0.0.1", "localhost", "::1"].includes(config.host);
+  const queued = analysis.start();
+  if (queued) console.log(`Stockfish is analyzing ${queued} finished game(s) that haven't been yet, in the background.`);
   // After the games' recovery, so a game the stop cut off already shows how it came out of it.
-  const tournaments = new TournamentService(service);
+  const tournaments = new TournamentService(service, { analysis });
   const carriedOn = tournaments.resumeRunning();
   if (carriedOn) console.log(`Carrying on with ${carriedOn} tournament(s).`);
   const server = createServer(service, {
@@ -138,6 +150,7 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
     loopbackOnly,
     listModels: (provider) => listModels(provider, config.providers[provider]!),
     tournaments,
+    analysis,
   });
   return new Promise((resolve, reject) => {
     server.on("error", reject);
@@ -152,11 +165,13 @@ function serve(config: AppConfig, service: GameService): Promise<number> {
   });
 }
 
-function printRatings(service: GameService, only?: string): number {
+function printRatings(service: GameService, analysis: AnalysisService, only?: string): number {
   if (only !== undefined && !TIME_CATEGORIES.includes(only as TimeCategory)) {
     throw new ConfigError(`Unknown time category "${only}". Use ${TIME_CATEGORIES.join(", ")}.`);
   }
-  const tables = service.ratings().tables();
+  const records = service.records();
+  const tables = rateGames(records).tables();
+  const accuracy = analysis.byCategory(records);
   const categories = only ? [only as TimeCategory] : TIME_CATEGORIES.filter((c) => tables[c].length);
   if (!categories.length) {
     console.log(`No finished games yet. Every model starts at ${START_RATING}.`);
@@ -170,10 +185,12 @@ function printRatings(service: GameService, only?: string): number {
       return;
     }
     const width = Math.max(...table.map((m) => m.model.length), "Model".length);
-    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L`);
+    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L  Accuracy`);
     table.forEach((m, i) => {
       const counts = [m.games, m.wins, m.draws, m.losses].map((c, j) => String(c).padStart(j ? 3 : 5)).join(" ");
-      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}`);
+      const average = accuracy[category].get(playerKey(m));
+      const accurate = average ? `${formatAccuracy(average.accuracy).padStart(8)} (${average.games} analyzed)` : "       –";
+      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}  ${accurate}`);
     });
   });
   return 0;
@@ -197,7 +214,59 @@ async function printModels(config: AppConfig): Promise<number> {
   return failed ? 1 : 0;
 }
 
-async function play(service: GameService, values: Record<string, string | boolean | undefined>): Promise<number> {
+/** Analyzes the games given, or every finished game that hasn't been, printing each side's accuracy. */
+async function analyzeGames(service: GameService, analysis: AnalysisService, ids: string[]): Promise<number> {
+  if (!analysis.settings) throw new ConfigError("Analysis is turned off in config.ini: [analysis] engine = off.");
+  const games = ids.length
+    ? ids.map((id) => {
+        const game = service.get(id);
+        if (!game) throw new ConfigError(`No saved game "${id}". Run "botwinnik list" to see the IDs.`);
+        if (game.status !== "finished") throw new ConfigError(`Game ${id} isn't finished; only finished games are analyzed.`);
+        return game;
+      })
+    : service.records().filter((g) => g.status === "finished" && !analysis.analysisOf(g));
+  if (!games.length) {
+    console.log("Every finished game has been analyzed.");
+    return 0;
+  }
+  let failed = 0;
+  for (const game of games) {
+    console.log(`${game.id}  ${game.timeControl.label}  ${game.white.model} vs ${game.black.model}  ${game.result}`);
+    if (!(await printAccuracy(analysis, game))) failed++;
+  }
+  return failed ? 1 : 0;
+}
+
+/** Analyzes a finished game and prints each side's accuracy; false if the engine failed. */
+async function printAccuracy(analysis: AnalysisService, game: GameRecord): Promise<boolean> {
+  const depth = analysis.settings!.depth;
+  const progress = (done: number, total: number) => {
+    if (process.stdout.isTTY) process.stdout.write(`\r  Stockfish, depth ${depth}: ${done}/${total} positions`);
+  };
+  try {
+    await analysis.analyze(game, progress);
+  } catch (err) {
+    if (process.stdout.isTTY) process.stdout.write("\n");
+    console.log(`  Couldn't analyze it: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+  if (process.stdout.isTTY) process.stdout.write("\r\x1b[K");
+  const report = analysis.view(game);
+  if (report?.status !== "done") return false;
+  for (const color of ["white", "black"] as const) {
+    const side = report[color];
+    const judged = `${side.inaccuracies} inaccuracies, ${side.mistakes} mistakes, ${side.blunders} blunders`;
+    const accuracy = side.accuracy === null ? "no moves" : `accuracy ${formatAccuracy(side.accuracy)}, ${judged}`;
+    console.log(`  ${color === "white" ? "White" : "Black"} (${game[color].model}): ${accuracy}`);
+  }
+  return true;
+}
+
+function formatAccuracy(accuracy: number): string {
+  return `${accuracy.toFixed(1)}%`;
+}
+
+async function play(service: GameService, analysis: AnalysisService, values: Record<string, string | boolean | undefined>): Promise<number> {
   const time = values.time as string | undefined;
   if (!time) throw new ConfigError("--time is required, e.g. --time 5+3");
   let request: Parameters<GameService["start"]>[0];
@@ -219,11 +288,14 @@ async function play(service: GameService, values: Record<string, string | boolea
   const game = service.start(request);
   console.log(`Game ${game.id}: ${game.white.model} (White) vs ${game.black.model} (Black), ${game.timeControl.label} ${game.timeControl.category}`);
   if (game.colorsAssigned === "random") console.log("Colors were drawn at random.");
-  return follow(service, game);
+  return follow(service, analysis, game);
 }
 
-/** Prints a game's moves and events as they come until it ends or pauses, then the result and costs. */
-async function follow(service: GameService, game: GameRecord, printedMoves = 0, printedEvents = 0): Promise<number> {
+/**
+ * Prints a game's moves and events as they come until it ends or pauses, then
+ * the result, the costs and, once Stockfish has analyzed it, the accuracy.
+ */
+async function follow(service: GameService, analysis: AnalysisService, game: GameRecord, printedMoves = 0, printedEvents = 0): Promise<number> {
   const print = (g: GameRecord) => {
     while (printedEvents < g.events.length || printedMoves < g.moves.length) {
       const nextEvent = g.events[printedEvents];
@@ -276,6 +348,10 @@ async function follow(service: GameService, game: GameRecord, printedMoves = 0, 
     console.log(`${category[0].toUpperCase()}${category.slice(1)} ratings: ${change("white")}, ${change("black")}`);
   }
   console.log(`Saved as ${final.id}. Export with: botwinnik pgn ${final.id}`);
+  if (final.status === "finished" && analysis.settings) {
+    console.log("Analyzing the game with Stockfish (Ctrl+C to skip; botwinnik serve or analyze does it later)...");
+    await printAccuracy(analysis, final);
+  }
   return 0;
 }
 

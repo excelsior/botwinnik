@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { AnalysisService } from "../analysis/service.js";
+import type { Engine, SearchResult } from "../analysis/engine.js";
 import { assignColors, GameService } from "../game/service.js";
 import { GameStore } from "../game/store.js";
 import { createGameRecord } from "../game/game.js";
@@ -500,5 +502,150 @@ describe("tournament API", () => {
     assert.equal(list[0].category, "blitz");
     assert.equal((await post(`/api/tournaments/${tournament.id}/abort`, {})).status, 409);
     assert.equal((await fetch(`${base}/api/tournaments/nope`)).status, 404);
+  });
+});
+
+describe("accuracy API", () => {
+  let dir: string;
+  let base: string;
+  let close: () => void;
+  let analysis: AnalysisService;
+  /** Holds the engine's searches while set. */
+  let hold: Promise<void> | null = null;
+  let release = () => {};
+  /** Holds the players' moves while set. */
+  let moves: Promise<void> | null = null;
+  let play = () => {};
+  const engine: Engine = {
+    name: "Fake Stockfish",
+    async newGame() {},
+    async search(_fen, moves): Promise<SearchResult> {
+      await hold;
+      // Level, until Black can mate after 1. f3 e5 2. g4.
+      if (moves.length === 3) return { score: { mate: 1 }, best: "d8h4", depth: 12 };
+      return { score: { cp: 0 }, best: moves.length % 2 ? "a7a6" : "a2a3", depth: 12 };
+    },
+    quit() {},
+  };
+
+  before(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    const games = new GameService(new GameStore(dir), (spec) => new FoolsMatePlayer(spec, async () => void (await moves)));
+    analysis = new AnalysisService(games, { depth: 12 }, { startEngine: async () => engine });
+    analysis.start();
+    const server = createServer(games, { providers, loopbackOnly: true, analysis });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    close = () => {
+      server.closeAllConnections();
+      server.close();
+    };
+  });
+
+  after(() => {
+    release();
+    play();
+    close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const post = (url: string, body: unknown) =>
+    fetch(`${base}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  /** The events a stream sends, parsed, as they arrive. */
+  async function* events(url: string) {
+    const reader = (await fetch(`${base}${url}`)).body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf("\n\n")) >= 0) {
+          const chunk = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          if (chunk.startsWith("data: ")) yield JSON.parse(chunk.slice(6));
+        }
+      }
+    } finally {
+      await reader.cancel();
+    }
+  }
+
+  it("streams a game, then its analysis, then shows each model's accuracy by time control", async () => {
+    hold = new Promise((resolve) => (release = resolve));
+    moves = new Promise((resolve) => (play = resolve));
+    const { game } = await (await post("/api/games", { timeControl: "3+2", players: [CLAUDE, GPT], firstPlayerColor: "white" })).json();
+
+    const seen: string[] = [];
+    let final;
+    for await (const event of events(`/api/games/${game.id}/events`)) {
+      if (event.game.status === "running") {
+        assert.equal(event.analysis, null, "nothing is analyzed while the game is played");
+        play();
+        continue;
+      }
+      const { status, progress } = event.analysis;
+      if (!seen.length) {
+        // The game's last update already says Stockfish is on it, so the page knows to keep listening.
+        assert.equal(event.game.result, "0-1");
+        const data = await (await fetch(`${base}/api/games/${game.id}`)).json();
+        assert.deepEqual(data.analysis, { status: "analyzing", progress: { done: 0, total: 5 } });
+        assert.equal((await (await fetch(`${base}/api/ratings`)).json()).analysis.pending, 1);
+        release();
+      }
+      seen.push(progress ? `${status} ${progress.done}/${progress.total}` : status);
+      if (status === "done") {
+        final = event.analysis;
+        break;
+      }
+    }
+    assert.deepEqual(
+      seen.filter((e, i) => e !== seen[i - 1]),
+      ["queued", "analyzing 0/5", "analyzing 1/5", "analyzing 2/5", "analyzing 3/5", "analyzing 4/5", "analyzing 5/5", "done"],
+    );
+    assert.equal(final.engine, "Fake Stockfish");
+    assert.equal(final.depth, 12);
+    assert.deepEqual(
+      final.moves.map((m: { san?: string; judgement: string | null; bestSan?: string }) => [m.judgement, m.bestSan ?? null]),
+      [
+        [null, "a3"],
+        [null, "a6"],
+        ["blunder", "a3"],
+        [null, null],
+      ],
+    );
+    assert.ok(final.white.accuracy < final.black.accuracy);
+
+    const ratings = await (await fetch(`${base}/api/ratings`)).json();
+    assert.deepEqual(ratings.analysis, { depth: 12, pending: 0 });
+    const blitz = Object.fromEntries(ratings.categories.blitz.map((m: { model: string; accuracy: unknown }) => [m.model, m.accuracy]));
+    assert.deepEqual(blitz, {
+      "claude-test": { accuracy: final.white.accuracy, games: 1 },
+      "gpt-test": { accuracy: final.black.accuracy, games: 1 },
+    });
+  });
+
+  it("gives the tournament standings each model's accuracy in its games", async () => {
+    const OPUS = { provider: "anthropic", model: "claude-opus" };
+    const { tournament } = await (await post("/api/tournaments", { timeControl: "1+0", players: [CLAUDE, GPT, OPUS] })).json();
+    let view;
+    for (let i = 0; i < 100; i++) {
+      view = await (await fetch(`${base}/api/tournaments/${tournament.id}`)).json();
+      if (view.tournament.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(view.tournament.status, "finished");
+    await analysis.whenIdle();
+    view = await (await fetch(`${base}/api/tournaments/${tournament.id}`)).json();
+    assert.deepEqual(view.analysis, { depth: 12, pending: 0 });
+    for (const row of view.standings) assert.equal(row.accuracy.games, 2, `${row.model} played two games`);
+    // Each model won its game as Black with every move as good as the engine's, and lost the other.
+    const bullet = (await (await fetch(`${base}/api/ratings`)).json()).categories.bullet;
+    for (const row of view.standings) {
+      assert.equal(row.accuracy.accuracy, bullet.find((m: { model: string }) => m.model === row.model).accuracy.accuracy);
+    }
   });
 });

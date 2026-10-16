@@ -3,10 +3,11 @@ import { readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { playerKey, type AnalysisService } from "../analysis/service.js";
 import { PROVIDER_LABELS, PROVIDERS, type AppConfig, type Provider } from "../config.js";
 import { toPgn } from "../game/pgn.js";
 import { PgnImportError } from "../game/pgnImport.js";
-import { K_FACTOR, START_RATING, type GameRatings } from "../game/ratings.js";
+import { K_FACTOR, rateGames, START_RATING, type GameRatings } from "../game/ratings.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
 import type { GameRecord, PlayerSpec } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
@@ -44,6 +45,8 @@ export interface ServerOptions {
   loopbackOnly: boolean;
   /** Runs the tournaments; defaults to one keeping them next to the games. */
   tournaments?: TournamentService;
+  /** Analyzes finished games with Stockfish for the players' accuracy; without it there is no accuracy. */
+  analysis?: AnalysisService;
   /** Fetches the models a provider's key can use; without it the form suggests config.ini's lists. */
   listModels?: (provider: Provider) => Promise<ModelOption[]>;
   /**
@@ -108,7 +111,7 @@ export function createServer(service: GameService, options: ServerOptions): Serv
     const startedWith = newestSourceChange();
     options = { ...options, codeChanged: () => newestSourceChange() > startedWith };
   }
-  const tournaments = options.tournaments ?? new TournamentService(service);
+  const tournaments = options.tournaments ?? new TournamentService(service, { analysis: options.analysis });
   return createHttpServer((req, res) => {
     handle(service, tournaments, options, catalog, req, res).catch((err) => {
       const status = err instanceof HttpError ? err.status : 500;
@@ -167,7 +170,15 @@ async function handle(
 
   // /api/ratings
   if (parts[1] === "ratings" && parts.length === 2 && method === "GET") {
-    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories: service.ratings().tables() });
+    const records = service.records();
+    const accuracy = options.analysis?.byCategory(records);
+    const categories = Object.fromEntries(
+      Object.entries(rateGames(records).tables()).map(([category, models]) => [
+        category,
+        models.map((m) => ({ ...m, accuracy: accuracy?.[category as keyof typeof accuracy].get(playerKey(m)) })),
+      ]),
+    );
+    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories, analysis: analysisInfo(options.analysis) });
   }
 
   if (parts[1] === "tournaments") return handleTournaments(tournaments, options, req, res, parts);
@@ -207,8 +218,13 @@ async function handle(
   const id = parts[2];
   const game = service.get(id);
   if (!game) throw new HttpError(404, `No game ${id}`);
+  const analysis = options.analysis;
+  // A finished game someone looks at goes to the front of the analysis queue.
+  if (method === "GET") analysis?.ensure(game, { urgent: true });
 
-  if (parts.length === 3 && method === "GET") return sendJson(res, 200, { ...withNow(game), ratings: service.ratings().forGame(game) });
+  if (parts.length === 3 && method === "GET") {
+    return sendJson(res, 200, { ...withNow(game), ratings: service.ratings().forGame(game), analysis: analysis?.view(game) ?? null });
+  }
 
   if (parts.length === 4 && parts[3] === "pgn" && method === "GET") {
     res.writeHead(200, {
@@ -242,19 +258,24 @@ async function handle(
     // Ratings only change when a game ends, so they are worked out again only when this game's status changes.
     let ratings: GameRatings | null = null;
     let ratedStatus: GameRecord["status"] | undefined;
+    let latest = game;
     const send = (g: GameRecord) => {
+      latest = g;
       if (g.status !== ratedStatus) {
         ratings = service.ratings().forGame(g);
         ratedStatus = g.status;
       }
-      res.write(`data: ${JSON.stringify({ ...withNow(g), ratings })}\n\n`);
+      res.write(`data: ${JSON.stringify({ ...withNow(g), ratings, analysis: analysis?.view(g) ?? null })}\n\n`);
     };
     send(game);
     const unsubscribe = service.subscribe(id, send);
+    // The analysis of a finished game moves on after the game itself stops changing.
+    const unsubscribeAnalysis = analysis?.subscribe(id, () => send(latest)) ?? (() => {});
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 15_000);
     req.on("close", () => {
       clearInterval(heartbeat);
       unsubscribe();
+      unsubscribeAnalysis();
     });
     return;
   }
@@ -286,7 +307,7 @@ async function handleTournaments(
   const id = parts[2];
   const view = tournaments.view(id);
   if (!view) throw new HttpError(404, `No tournament ${id}`);
-  if (parts.length === 3 && method === "GET") return sendJson(res, 200, view);
+  if (parts.length === 3 && method === "GET") return sendJson(res, 200, { ...view, analysis: analysisInfo(options.analysis) });
   if (parts.length === 4 && parts[3] === "abort" && method === "POST") {
     if (!tournaments.abort(id)) throw new HttpError(409, "The tournament is not running.");
     return sendJson(res, 200, tournaments.view(id));
@@ -326,6 +347,12 @@ function parseStartRequest(body: unknown, options: ServerOptions): StartGameRequ
     throw new HttpError(400, 'firstPlayerColor must be "white", "black" or "random".');
   }
   return { timeControl: b.timeControl, players, firstPlayerColor: color };
+}
+
+/** What the ratings page says about the analysis: null when it's off. */
+function analysisInfo(analysis: AnalysisService | undefined) {
+  if (!analysis?.settings) return null;
+  return { depth: analysis.settings.depth, pending: analysis.pending() };
 }
 
 function withNow(game: GameRecord) {

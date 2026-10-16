@@ -8,6 +8,8 @@ can be imported from PGN too, and a game exported while paused can be resumed
 after importing it. Each model has an Elo rating for bullet, blitz, rapid and
 classical that moves with every finished game. Models can also meet in
 round-robin tournaments, whose games count for the ratings like any other.
+Once a game is over, Stockfish analyzes it and works out each player's
+accuracy, which the app keeps per game, per tournament and per time control.
 
 ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API), Grok
 (xAI API) and Yandex's Alice AI and YandexGPT (Yandex AI Studio) are
@@ -60,6 +62,10 @@ folder_id = b1g...                                 ; its folder
 models = aliceai-llm, aliceai-llm-flash, yandexgpt-5.1
 effort =                                           ; for the models that reason
 
+[analysis]
+engine =                                           ; empty: the bundled Stockfish (see Accuracy)
+depth = 18
+
 [app]
 host = 127.0.0.1
 port = 3000
@@ -100,7 +106,10 @@ elsewhere.
 **Web page** (`npm start`): start a game and watch it live with the board,
 both clocks, the material each side has captured and each move's reasoning.
 Under each player's name is the reasoning effort its moves are asked at
-("default effort" when none is sent; see `effort` under Setup).
+("default effort" when none is sent; see `effort` under Setup) and, once
+Stockfish has analyzed the finished game, its accuracy, with Stockfish's
+?!, ? and ?? after its inaccuracies, mistakes and blunders in the move list
+(see Accuracy).
 The page fits the window: the board takes the height it has, and the move list
 scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
@@ -131,7 +140,9 @@ npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # 
 npm run botwinnik -- models   # the models each key can use
 npm run botwinnik -- resume <game-id>   # continue a paused game
 npm run botwinnik -- list
-npm run botwinnik -- ratings   # each model's Elo ratings (or: ratings blitz)
+npm run botwinnik -- ratings   # each model's Elo ratings and accuracy (or: ratings blitz)
+npm run botwinnik -- analyze   # analyze the finished games that haven't been yet
+npm run botwinnik -- analyze <game-id>   # analyze a game again
 npm run botwinnik -- pgn <game-id> --out game.pgn
 npm run botwinnik -- import game.pgn   # a game without a result comes back paused
 ```
@@ -236,6 +247,55 @@ my-fine-tuned-model = 1.25, 10
 A model without a price still has its tokens counted, and its cost shows as
 unknown.
 
+## Accuracy
+
+Every finished game is analyzed by Stockfish once it's over: the server
+evaluates the start position and the position after every move, in the
+background, one game at a time. Games are never analyzed while they're
+played (running or paused), so nothing the engine finds can reach the
+players. When the server starts, it queues the finished games that haven't
+been analyzed yet, newest first (imported ones included), and a game whose
+page is opened goes to the front of the queue. The game page shows the
+progress until the analysis is done. `play` analyzes its game after it ends
+(Ctrl+C skips that), and `botwinnik analyze` analyzes what's left without
+the server.
+
+Accuracy is worked out the way [Lichess](https://lichess.org/page/accuracy)
+does it. Each evaluation becomes a winning chance from 0 to 100% (evaluations
+past ten pawns, and mates, count as ten pawns), and each move scores 0 to 100
+by how much of its player's winning chance it gave away. A game's accuracy
+for a player is the average of two means of its move scores: one weighted by
+how much the position was swinging at the time, and the harmonic mean, which
+a few bad moves pull down hard. A move that gives away 5 points of winning
+chance is an inaccuracy (?!), 10 a mistake (?) and 15 a blunder (??).
+Hover over a move to see the evaluation after it, its score and the move
+Stockfish preferred, and over a player's accuracy for the counts and the
+average centipawn loss.
+
+A model's accuracy over several games is the plain average of its game
+accuracies: per time category in the ratings tables (home page and
+`botwinnik ratings`) and per tournament in the standings. Only finished
+games count, and a model playing itself counts for both sides.
+
+The engine is the Stockfish 18 lite build the eval bar uses
+(single-threaded WebAssembly, in `public/vendor/stockfish/`), run with Node,
+so it needs nothing installed. It searches each position to depth 18, which
+takes it roughly half a second a position, so a 40-move game takes under a
+minute.
+`[analysis]` in `config.ini` changes that:
+
+```ini
+[analysis]
+engine = /usr/local/bin/stockfish   ; any UCI engine: a path (relative to config.ini) or a command on the PATH
+depth = 20                          ; plies searched for each position
+```
+
+A native Stockfish is several times faster. `engine = off` stops analyzing
+games; the analyses already saved still count. Changing the engine or the
+depth doesn't redo games already analyzed; `botwinnik analyze <game-id>` does,
+one game at a time. If the engine can't start, the server says so, and the
+games waiting for it are tried again when it restarts.
+
 ## Ratings
 
 Every model has a separate Elo rating for each time control category:
@@ -251,10 +311,11 @@ model gains 16 points and the loser drops by the same amount. Games count in
 the order they ended. Aborted games and games between a model and itself
 don't count; a paused game counts once it is resumed and finished.
 
-The home page lists the ratings with a tab per category, and the game page
+The home page lists the ratings with a tab per category, next to each
+model's accuracy in that category (see Accuracy), and the game page
 shows each player's rating in the game's category going into the game and,
 once it's over, the change. `botwinnik ratings` prints a table per category
-(`botwinnik ratings blitz` just one), and PGN exports carry the ratings going
+(`botwinnik ratings blitz` just one), accuracy included, and PGN exports carry the ratings going
 into the game as `WhiteElo` and `BlackElo`.
 
 Ratings are worked out again from the saved games whenever they're needed,
@@ -290,12 +351,19 @@ starts again. The games the stop cut off come back paused (see above) and hold
 their round until they are resumed. Tournaments are saved as
 `games/tournaments/<id>.json`.
 
+The standings also show each model's accuracy over its tournament games
+that Stockfish has analyzed (see Accuracy).
+
 ## Saved games and PGN
 
 Every game is saved as `games/<id>.json` after each change, including the
 moves, each move's reasoning, thinking time, clock, tokens and cost, and
 events such as illegal moves and draw offers. Games interrupted by stopping the app are
-marked as aborted the next time it starts.
+marked as aborted the next time it starts. Stockfish's analysis of a finished
+game is saved next to it as `games/analysis/<id>.json`: the engine and depth,
+and the evaluation and best move of every position. The accuracy is worked
+out from it whenever it's needed, and a game whose moves no longer match its
+analysis is analyzed again.
 
 PGN export includes the standard tags (`TimeControl`, `Termination`,
 `WhiteType "program"`...), the clock after each move as `[%clk]` and the time
@@ -327,6 +395,10 @@ npm run typecheck
 the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini,
 xAI and Yandex clients;
 `src/server` the admin API; `public/` the web page.
+
+`src/analysis` holds Stockfish's analysis of finished games: the UCI engine
+client, the queue that analyzes games in the background, and the accuracy
+formulas.
 
 `src/tournament` holds the round-robin schedule, the standings and the
 tournament service, which runs tournaments on top of the game service.

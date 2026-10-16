@@ -41,6 +41,7 @@ export class GameService {
   /** Games that are over but whose last call is still running in the background. */
   private readonly finishing = new Map<string, Promise<void>>();
   private readonly listeners = new Map<string, Set<Listener>>();
+  private readonly allListeners = new Set<Listener>();
 
   constructor(
     readonly store: GameStore,
@@ -109,6 +110,7 @@ export class GameService {
       gameId && /^[\w-]+$/.test(gameId) && !this.running.has(gameId) && !this.store.load(gameId) ? gameId : this.store.newId(),
     );
     this.store.save(record);
+    this.notifyAll(record);
     return record;
   }
 
@@ -136,15 +138,16 @@ export class GameService {
   }
 
   list(): GameSummary[] {
-    return this.games().map(summarize);
+    return this.records().map(summarize);
   }
 
   /** Every model's Elo rating, worked out from the saved games (including ones other processes saved). */
   ratings(): Ratings {
-    return rateGames(this.games());
+    return rateGames(this.records());
   }
 
-  private games(): GameRecord[] {
+  /** Every saved game, newest first; running ones as they are now. */
+  records(): GameRecord[] {
     return this.store.list().map((g) => this.running.get(g.id)?.runner.record ?? g);
   }
 
@@ -183,13 +186,25 @@ export class GameService {
     };
   }
 
+  /** Calls `listener` whenever any game changes or is imported. */
+  subscribeAll(listener: Listener): () => void {
+    this.allListeners.add(listener);
+    return () => this.allListeners.delete(listener);
+  }
+
   private changed(game: GameRecord): void {
     try {
       this.store.save(game);
     } catch (err) {
       console.error(`Could not save game ${game.id}:`, err);
     }
+    // Everyone's listeners first, so a game's watchers hear what they did too (say, that its analysis was queued).
+    this.notifyAll(game);
     for (const listener of this.listeners.get(game.id) ?? []) listener(game);
+  }
+
+  private notifyAll(game: GameRecord): void {
+    for (const listener of this.allListeners) listener(game);
   }
 }
 
