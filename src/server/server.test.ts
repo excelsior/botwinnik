@@ -106,6 +106,30 @@ describe("game service", () => {
     }
   });
 
+  it("works out the costs of a game played before its models had a price", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    try {
+      const unpriced = (spec: PlayerSpec) =>
+        new ScriptedPlayer(spec, spec.model.startsWith("claude") ? ["f3", "g4"] : ["e5", "Qh4#"], undefined, callSpend(null, 1000, 100));
+      const played = new GameService(new GameStore(dir), unpriced);
+      const game = played.start({ timeControl: "5+3", players: [CLAUDE, GPT], firstPlayerColor: "white" });
+      await played.wait(game.id);
+      assert.equal(played.list()[0].costUsd, null);
+
+      // claude-test now costs $1/$10 and gpt-test $2/$20 per million tokens.
+      const prices = { "claude-test": { input: 1, output: 10 }, "gpt-test": { input: 2, output: 20 } };
+      const service = new GameService(new GameStore(dir, prices), unpriced);
+      const saved = service.get(game.id)!;
+      assert.ok(Math.abs(saved.moves[0].spend.costUsd! - 0.002) < 1e-12);
+      assert.ok(Math.abs(saved.moves[1].spend.costUsd! - 0.004) < 1e-12);
+      assert.ok(Math.abs(saved.spend.white.costUsd! - 0.004) < 1e-12);
+      assert.ok(Math.abs(saved.spend.black.costUsd! - 0.008) < 1e-12);
+      assert.ok(Math.abs(service.list()[0].costUsd! - 0.012) < 1e-12);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("pauses a game whose player runs out of funds, keeps it paused across restarts, and resumes it", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
     try {

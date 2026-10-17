@@ -84,7 +84,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const config = loadConfig(values.config);
-  const service = new GameService(new GameStore(config.gamesDir), playerFactory(config));
+  const service = new GameService(new GameStore(config.gamesDir, config.prices), playerFactory(config));
   const analysis = new AnalysisService(service, config.analysis);
 
   switch (command) {
