@@ -115,14 +115,16 @@ moves).
 The page fits the window: the board takes the height it has, and the move list
 scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
-move), and flip the board with the ⇅ button or F. Abort a running game, resume
-a paused one, download a game as PGN once it is over or paused, and import a
-game from a PGN file on the home page. **Rematch** (on a finished game's page
-or its row in the games list) starts a game between the same two models with
-the same time control, with the colors swapped, kept or drawn at random. The
-page only listens on this machine by default. After updating Botwinnik (say,
-with `git pull`), restart it; until then the home page shows a reminder,
-because the page updates on reload but the running server doesn't.
+move), and flip the board with the ⇅ button or F. **Copy FEN** (or C) copies
+the position on the board as FEN, whichever move you're looking at. Abort a
+running game, resume a paused one, download a game as PGN once it is over or
+paused, and import a game from a PGN file on the home page. **Rematch** (on a
+finished game's page or its row in the games list) starts a game between the
+same two models with the same time control, with the colors swapped, kept or
+drawn at random. The page only listens on this machine by default. After
+updating Botwinnik (say, with `git pull`), restart it; until then the home
+page shows a reminder, because the page updates on reload but the running
+server doesn't.
 `npm run dev` restarts by itself whenever the code or `config.ini` changes
 (changes to `public/` show on a page reload). Games running when the app
 stops come back paused: resume one and the turn it stopped in starts over,

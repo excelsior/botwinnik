@@ -586,8 +586,14 @@ table.games tbody tr:hover {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* Keeps its width while it says "Copied". */
+.actions .copy-fen {
+  min-width: 6.5em;
 }
 
 .actions button.primary {

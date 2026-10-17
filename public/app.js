@@ -1342,6 +1342,8 @@ function showGame(id) {
   let evalOn = loadSetting(EVAL_SETTING, "on") !== "off";
   let ratings = null; // { white: { before, after? }, black: ... }, or null for an unrated game
   let analysis = null; // Stockfish's analysis once the game is over: { status, ... }, or null
+  let copied = null; // the FEN just copied, while the button says so
+  let copiedTimer = 0;
 
   const boardEl = h("div", { class: "board", role: "img" });
   const evalFill = h("div", { class: "eval-fill" });
@@ -1356,6 +1358,7 @@ function showGame(id) {
   const actions = h("div", { class: "actions" });
   const moveList = h("ol", { class: "moves" });
   const nav = h("div", { class: "nav" });
+  const copyButton = h("button", { class: "copy-fen", onclick: () => copyFen(), title: "Copy the FEN of the position on the board (C)" });
   const boardCol = h("div", { class: "board-col" }, topBar, boardArea, bottomBar, nav);
   const body = h("div", { class: "game-body" }, boardCol, h("section", { class: "card moves-card" }, h("h3", {}, "Moves and reasoning"), moveList));
   const view = h("div", { class: `game${evalOn ? "" : " no-eval"}` }, h("div", { class: "game-head" }, h("div", {}, title, meta), actions), banner, body);
@@ -1410,6 +1413,7 @@ function showGame(id) {
     else if (e.key === "End") setView(game.moves.length);
     else if (e.key === "f" || e.key === "F") flip();
     else if (e.key === "e" || e.key === "E") toggleEval();
+    else if (e.key === "c" || e.key === "C") copyFen();
     else return;
     e.preventDefault();
   };
@@ -1446,6 +1450,24 @@ function showGame(id) {
     }
     fitBoard();
     render();
+  }
+
+  /** Copies the FEN of the position on the board; where the clipboard can't be used, shows it to copy by hand. */
+  async function copyFen() {
+    const fen = fenAt(game, viewPly ?? game.moves.length);
+    try {
+      await navigator.clipboard.writeText(fen);
+    } catch {
+      prompt("FEN of the position on the board:", fen);
+      return;
+    }
+    copied = fen;
+    copyButton.textContent = "Copied";
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copied = null;
+      copyButton.textContent = "Copy FEN";
+    }, 1500);
   }
 
   function sideToMove() {
@@ -1605,6 +1627,7 @@ function showGame(id) {
             "Rematch",
           )
         : null,
+      copyButton,
       game.status === "running"
         ? h("button", { disabled: true, title: "Available once the game is over or paused" }, "Download PGN")
         : h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
@@ -1650,7 +1673,8 @@ function showGame(id) {
     }
 
     const shownPly = viewPly ?? game.moves.length;
-    const fen = shownPly === 0 ? game.startFen : game.moves[shownPly - 1].fenAfter;
+    const fen = fenAt(game, shownPly);
+    copyButton.textContent = copied === fen ? "Copied" : "Copy FEN";
     const material = materialOf(game, shownPly);
     const [top, bottom] = flipped ? ["white", "black"] : ["black", "white"];
     playerBar(topBar, top, material);
@@ -1816,6 +1840,11 @@ const PIECE_ORDER = ["p", "n", "b", "r", "q"];
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const PIECE_NAMES = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen" };
 
+/** The FEN after `ply` half-moves (0: the starting position). */
+function fenAt(game, ply) {
+  return ply === 0 ? game.startFen : game.moves[ply - 1].fenAfter;
+}
+
 /** Piece letters by square ("e4" → "P") from a FEN. */
 function squaresOf(fen) {
   const squares = {};
@@ -1837,7 +1866,7 @@ function materialOf(game, ply) {
   const captured = { white: [], black: [] };
   for (let i = 0; i < ply; i++) {
     const move = game.moves[i];
-    const before = squaresOf(i === 0 ? game.startFen : game.moves[i - 1].fenAfter);
+    const before = squaresOf(fenAt(game, i));
     const from = move.uci.slice(0, 2);
     const to = move.uci.slice(2, 4);
     let victim = before[to];
@@ -1845,9 +1874,8 @@ function materialOf(game, ply) {
     if (!victim && before[from]?.toLowerCase() === "p" && from[0] !== to[0]) victim = "p";
     if (victim) captured[move.color].push(victim.toLowerCase());
   }
-  const fen = ply === 0 ? game.startFen : game.moves[ply - 1].fenAfter;
   let diff = 0;
-  for (const piece of Object.values(squaresOf(fen))) {
+  for (const piece of Object.values(squaresOf(fenAt(game, ply)))) {
     const value = PIECE_VALUES[piece.toLowerCase()];
     diff += piece === piece.toUpperCase() ? value : -value;
   }
