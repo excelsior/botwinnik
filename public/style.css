@@ -768,7 +768,8 @@ table.games tbody tr:hover {
   color: var(--muted);
 }
 
-.player-bar .accuracy {
+.player-bar .accuracy,
+.player-bar .illegal {
   flex: none;
   margin-right: 4px;
   padding: 0 6px;
@@ -779,6 +780,11 @@ table.games tbody tr:hover {
   font-variant-numeric: tabular-nums;
   background: var(--info-bg);
   color: var(--info-text);
+}
+
+.player-bar .illegal {
+  background: var(--warn-bg);
+  color: var(--warn-text);
 }
 
 /* On phones the model name needs the room more; it gives the provider away anyway. */

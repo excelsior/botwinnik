@@ -1,13 +1,15 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { AnalysisService, playerKey } from "./analysis/service.js";
+import type { AccuracyAverage } from "./analysis/accuracy.js";
+import { AnalysisService } from "./analysis/service.js";
 import { ConfigError, loadConfig, parsePlayerSpec, PROVIDER_LABELS, PROVIDERS, type AppConfig } from "./config.js";
 import { moveNumberOf } from "./game/game.js";
+import { illegalMoveRatesByCategory, illegalMovesOf, modelTotals, type IllegalMoveRate } from "./game/illegalMoves.js";
 import { toPgn } from "./game/pgn.js";
 import { K_FACTOR, rateGames, START_RATING } from "./game/ratings.js";
 import { GameService } from "./game/service.js";
 import { gameSpend, GameStore } from "./game/store.js";
-import type { GameRecord } from "./game/types.js";
+import { playerKey, type GameRecord } from "./game/types.js";
 import { playerFactory } from "./players/llmPlayer.js";
 import { canPlay, listModels } from "./players/models.js";
 import { createServer } from "./server/server.js";
@@ -40,8 +42,10 @@ const USAGE = `Usage:
   botwinnik ratings [bullet|blitz|rapid|classical]
       Show each model's Elo ratings, one table per time category (or just the
       one given). Every model starts at ${START_RATING} in each category, and each
-      finished game moves its players' ratings (K = ${K_FACTOR}). Accuracy is the
-      model's average over the games Stockfish has analyzed.
+      finished game moves its players' ratings (K = ${K_FACTOR}). Illegal is the
+      share of the moves the model tried that were illegal, and Accuracy its
+      average over the games Stockfish has analyzed. Without a category, a last
+      table puts every time control together.
 
   botwinnik analyze [<game-id>...]
       Analyze finished games with Stockfish and print each player's accuracy:
@@ -172,6 +176,7 @@ function printRatings(service: GameService, analysis: AnalysisService, only?: st
   const records = service.records();
   const tables = rateGames(records).tables();
   const accuracy = analysis.byCategory(records);
+  const illegal = illegalMoveRatesByCategory(records);
   const categories = only ? [only as TimeCategory] : TIME_CATEGORIES.filter((c) => tables[c].length);
   if (!categories.length) {
     console.log(`No finished games yet. Every model starts at ${START_RATING}.`);
@@ -185,15 +190,35 @@ function printRatings(service: GameService, analysis: AnalysisService, only?: st
       return;
     }
     const width = Math.max(...table.map((m) => m.model.length), "Model".length);
-    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L  Accuracy`);
+    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Rating  Games   W   D   L  Illegal  Accuracy`);
     table.forEach((m, i) => {
       const counts = [m.games, m.wins, m.draws, m.losses].map((c, j) => String(c).padStart(j ? 3 : 5)).join(" ");
-      const average = accuracy[category].get(playerKey(m));
-      const accurate = average ? `${formatAccuracy(average.accuracy).padStart(8)} (${average.games} analyzed)` : "       –";
-      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}  ${accurate}`);
+      const figures = `${illegalColumn(illegal[category].get(playerKey(m)))}  ${accuracyColumn(accuracy[category].get(playerKey(m)))}`;
+      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.rating).padStart(6)}  ${counts}  ${figures}`);
     });
   });
+  if (!only) {
+    // Every time control together, a model playing itself included.
+    const totals = modelTotals(records, analysis.averages(records));
+    const width = Math.max(...totals.map((m) => m.model.length), "Model".length);
+    console.log("\nAll time controls");
+    console.log(`${"#".padStart(3)}  ${"Model".padEnd(width)}  Games  Illegal  Accuracy`);
+    totals.forEach((m, i) => {
+      const figures = `${illegalColumn(m.illegalMoves)}  ${accuracyColumn(m.accuracy)}`;
+      console.log(`${String(i + 1).padStart(3)}  ${m.model.padEnd(width)}  ${String(m.games).padStart(5)}  ${figures}`);
+    });
+  }
   return 0;
+}
+
+/** The share of a model's moves that were illegal, in a column 7 wide. */
+function illegalColumn(rate: IllegalMoveRate | undefined): string {
+  return (rate === undefined || rate.percent === null ? "–" : formatPercent(rate.percent)).padStart(7);
+}
+
+/** A model's average accuracy, with the games it's over. */
+function accuracyColumn(average: AccuracyAverage | undefined): string {
+  return average ? `${formatPercent(average.accuracy).padStart(8)} (${average.games} analyzed)` : "       –";
 }
 
 async function printModels(config: AppConfig): Promise<number> {
@@ -256,14 +281,14 @@ async function printAccuracy(analysis: AnalysisService, game: GameRecord): Promi
   for (const color of ["white", "black"] as const) {
     const side = report[color];
     const judged = `${side.inaccuracies} inaccuracies, ${side.mistakes} mistakes, ${side.blunders} blunders`;
-    const accuracy = side.accuracy === null ? "no moves" : `accuracy ${formatAccuracy(side.accuracy)}, ${judged}`;
+    const accuracy = side.accuracy === null ? "no moves" : `accuracy ${formatPercent(side.accuracy)}, ${judged}`;
     console.log(`  ${color === "white" ? "White" : "Black"} (${game[color].model}): ${accuracy}`);
   }
   return true;
 }
 
-function formatAccuracy(accuracy: number): string {
-  return `${accuracy.toFixed(1)}%`;
+function formatPercent(percent: number): string {
+  return `${percent.toFixed(1)}%`;
 }
 
 async function play(service: GameService, analysis: AnalysisService, values: Record<string, string | boolean | undefined>): Promise<number> {
@@ -324,6 +349,12 @@ async function follow(service: GameService, analysis: AnalysisService, game: Gam
     return 1;
   }
   console.log(`\n${final.result}  ${final.termination?.message ?? ""}`);
+  const illegal = illegalMovesOf(final);
+  const illegalBy = (color: "white" | "black") => {
+    const { illegal: count, tried, percent } = illegal[color];
+    return `${final[color].model} ${count} of ${tried} moves tried${percent === null ? "" : ` (${formatPercent(percent)})`}`;
+  };
+  console.log(`Illegal moves: ${illegalBy("white")}, ${illegalBy("black")}`);
   if (final.unfinishedCall) {
     const who = final.unfinishedCall === "white" ? "White" : "Black";
     console.log(`Waiting for ${who}'s last API call to finish so its cost can be recorded (Ctrl+C to skip)...`);

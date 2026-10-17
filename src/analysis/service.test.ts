@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { createGameRecord } from "../game/game.js";
 import { GameService } from "../game/service.js";
 import { GameStore } from "../game/store.js";
-import type { GameRecord, PlayerSpec } from "../game/types.js";
+import { playerKey, type GameRecord, type PlayerSpec } from "../game/types.js";
 import { CLAUDE, FoolsMatePlayer, GPT } from "../testing.js";
 import { parseTimeControl } from "../timeControl.js";
 import type { Engine, SearchResult } from "./engine.js";
-import { AnalysisService, playerKey } from "./service.js";
+import { AnalysisService } from "./service.js";
 
 /** An engine that answers from a script: `score(moves)` for the position after `moves`. */
 class FakeEngine implements Engine {

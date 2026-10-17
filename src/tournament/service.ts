@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { playerKey, type AnalysisService } from "../analysis/service.js";
+import type { AnalysisService } from "../analysis/service.js";
+import { illegalMoveRates } from "../game/illegalMoves.js";
 import type { GameService } from "../game/service.js";
 import { summarize, type GameSummary } from "../game/store.js";
-import type { PlayerSpec } from "../game/types.js";
+import { playerKey, type PlayerSpec } from "../game/types.js";
 import { parseTimeControl, timeCategory, timeControlLabel } from "../timeControl.js";
 import { roundRobin } from "./schedule.js";
 import { currentRound, isOver, standings, type Standing, type TournamentRecord } from "./tournament.js";
@@ -218,12 +219,13 @@ export class TournamentService {
         return game ? ratings.forGame(game) : null;
       },
     });
-    if (this.analysis) {
-      const accuracy = this.analysis.averages([...records.values()]);
-      for (const row of table) {
-        const average = accuracy.get(playerKey(row));
-        if (average) row.accuracy = average;
-      }
+    const illegal = illegalMoveRates([...records.values()]);
+    const accuracy = this.analysis?.averages([...records.values()]);
+    for (const row of table) {
+      const rate = illegal.get(playerKey(row));
+      if (rate) row.illegalMoves = rate;
+      const average = accuracy?.get(playerKey(row));
+      if (average) row.accuracy = average;
     }
     const round = currentRound(tournament, (g) => records.get(g));
     return {

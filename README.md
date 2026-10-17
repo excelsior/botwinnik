@@ -9,7 +9,8 @@ after importing it. Each model has an Elo rating for bullet, blitz, rapid and
 classical that moves with every finished game. Models can also meet in
 round-robin tournaments, whose games count for the ratings like any other.
 Once a game is over, Stockfish analyzes it and works out each player's
-accuracy, which the app keeps per game, per tournament and per time control.
+accuracy, which the app keeps per game, per tournament and per time control,
+along with the share of each model's moves that were illegal.
 
 ChatGPT (OpenAI API), Claude (Anthropic API), Gemini (Gemini API), Grok
 (xAI API) and Yandex's Alice AI and YandexGPT (Yandex AI Studio) are
@@ -109,7 +110,8 @@ Under each player's name is the reasoning effort its moves are asked at
 ("default effort" when none is sent; see `effort` under Setup) and, once
 Stockfish has analyzed the finished game, its accuracy, with Stockfish's
 ?!, ? and ?? after its inaccuracies, mistakes and blunders in the move list
-(see Accuracy).
+(see Accuracy), and, once it has made one, its illegal moves (see Illegal
+moves).
 The page fits the window: the board takes the height it has, and the move list
 scrolls on its own, following each new move as it is played. Step through the
 moves with the arrow keys (Home and End jump to the start and the latest
@@ -140,7 +142,7 @@ npm run botwinnik -- play --time 10+0 --players claude-opus-5-5,gpt-5.6-sol   # 
 npm run botwinnik -- models   # the models each key can use
 npm run botwinnik -- resume <game-id>   # continue a paused game
 npm run botwinnik -- list
-npm run botwinnik -- ratings   # each model's Elo ratings and accuracy (or: ratings blitz)
+npm run botwinnik -- ratings   # each model's Elo ratings, illegal moves and accuracy (or: ratings blitz)
 npm run botwinnik -- analyze   # analyze the finished games that haven't been yet
 npm run botwinnik -- analyze <game-id>   # analyze a game again
 npm run botwinnik -- pgn <game-id> --out game.pgn
@@ -296,6 +298,20 @@ depth doesn't redo games already analyzed; `botwinnik analyze <game-id>` does,
 one game at a time. If the engine can't start, the server says so, and the
 games waiting for it are tried again when it restarts.
 
+## Illegal moves
+
+Every illegal move a model tries is counted (see Rules: three unusable
+replies in a row within one turn count as one), and the app shows it as a
+share of all the moves the model tried, legal or not: 1 illegal move in a
+game where it played 39 legal ones is 2.5%. The game page shows it for each
+player, and `play` prints it when the game ends. Over several games the
+illegal moves and the moves tried are added up before dividing, so a long
+game counts for more than a short one: per time category and for every time
+control together in the ratings tables (home page and `botwinnik ratings`),
+and per tournament in the standings. Only finished games count, and a model
+playing itself counts for both sides. The counts come straight from the
+saved games, so they cover every game played before this was added too.
+
 ## Ratings
 
 Every model has a separate Elo rating for each time control category:
@@ -312,10 +328,12 @@ the order they ended. Aborted games and games between a model and itself
 don't count; a paused game counts once it is resumed and finished.
 
 The home page lists the ratings with a tab per category, next to each
-model's accuracy in that category (see Accuracy), and the game page
+model's illegal moves and accuracy in that category (see Illegal moves and
+Accuracy), and an All tab with those over every time control. The game page
 shows each player's rating in the game's category going into the game and,
 once it's over, the change. `botwinnik ratings` prints a table per category
-(`botwinnik ratings blitz` just one), accuracy included, and PGN exports carry the ratings going
+and one for every time control together (`botwinnik ratings blitz` just the
+one category), illegal moves and accuracy included, and PGN exports carry the ratings going
 into the game as `WhiteElo` and `BlackElo`.
 
 Ratings are worked out again from the saved games whenever they're needed,
@@ -351,7 +369,8 @@ starts again. The games the stop cut off come back paused (see above) and hold
 their round until they are resumed. Tournaments are saved as
 `games/tournaments/<id>.json`.
 
-The standings also show each model's accuracy over its tournament games
+The standings also show the share of each model's moves in its tournament
+games that were illegal (see Illegal moves), and its accuracy over those
 that Stockfish has analyzed (see Accuracy).
 
 ## Saved games and PGN
@@ -391,8 +410,8 @@ npm test            # node:test via tsx
 npm run typecheck
 ```
 
-`src/game` holds the engine (`game.ts`), PGN export and import, storage and
-the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini,
+`src/game` holds the engine (`game.ts`), PGN export and import, storage,
+ratings, illegal-move counts and the game service; `src/players` the prompts and the OpenAI, Anthropic, Gemini,
 xAI and Yandex clients;
 `src/server` the admin API; `public/` the web page.
 

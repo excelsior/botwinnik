@@ -99,9 +99,16 @@ function formatUsd(usd) {
   return usd < 0.1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
-/** "87.3%". */
-function formatAccuracy(accuracy) {
-  return `${accuracy.toFixed(1)}%`;
+/** "87.3%", "1.5%". */
+function formatPercent(percent) {
+  return `${percent.toFixed(1)}%`;
+}
+
+/** A side's illegal moves in a game, out of the moves it tried (legal or not), as the server counts them. */
+function illegalMovesOf(game, color) {
+  const illegal = game.illegalMoves[color];
+  const tried = game.moves.filter((m) => m.color === color).length + illegal;
+  return { illegal, tried, percent: tried ? (100 * illegal) / tried : null };
 }
 
 /** "1 inaccuracy", "2 mistakes". */
@@ -484,17 +491,20 @@ const RATINGS_TAB_SETTING = "botwinnik.ratingsTab";
 
 /**
  * The ratings card's contents: a tab per time category, each with its own
- * table. `categories` maps bullet, blitz, rapid and classical to their models.
+ * table, and one for every time control together. `categories` maps bullet,
+ * blitz, rapid and classical to their models; `overall` is every model's
+ * figures over all its games.
  */
-function ratingsCard({ start, k, categories, analysis }) {
-  const order = Object.keys(categories);
+function ratingsCard({ start, k, categories, overall, analysis }) {
+  const rated = Object.keys(categories);
   const gamesIn = (c) => categories[c].reduce((sum, m) => sum + m.games, 0) / 2;
-  if (!order.some(gamesIn)) {
+  if (!rated.some(gamesIn)) {
     return [h("h2", {}, "Ratings"), h("p", { class: "muted" }, `No rated games yet. Every model starts at ${start} in each time control.`)];
   }
+  const order = [...rated, "all"];
   // The tab picked last time, or the time control with the most games.
   let current = loadSetting(RATINGS_TAB_SETTING, null);
-  if (!order.includes(current)) current = order.reduce((best, c) => (gamesIn(c) > gamesIn(best) ? c : best));
+  if (!order.includes(current)) current = rated.reduce((best, c) => (gamesIn(c) > gamesIn(best) ? c : best));
 
   const panel = h("div", { role: "tabpanel", id: "ratings-panel" });
   const tabs = order.map((c) =>
@@ -515,7 +525,7 @@ function ratingsCard({ start, k, categories, analysis }) {
           tabs[order.indexOf(next)].focus();
         },
       },
-      CATEGORY_NAMES[c] ?? c,
+      c === "all" ? "All" : (CATEGORY_NAMES[c] ?? c),
     ),
   );
   const select = (c) => {
@@ -528,9 +538,11 @@ function ratingsCard({ start, k, categories, analysis }) {
     });
     panel.setAttribute("aria-labelledby", `ratings-tab-${c}`);
     panel.replaceChildren(
-      categories[c].length
-        ? ratingsTable(categories[c], analysis)
-        : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
+      c === "all"
+        ? overallTable(overall, analysis)
+        : categories[c].length
+          ? ratingsTable(categories[c], analysis)
+          : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
     );
   };
   select(current);
@@ -546,10 +558,19 @@ function ratingsCard({ start, k, categories, analysis }) {
       { class: "muted note" },
       `Elo ratings from finished games, in the order they ended, kept separately for each time control. ` +
         `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, under 10 blitz, under 60 rapid, and 60 or more classical. ` +
-        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count. ` +
-        `Accuracy (0 to 100%, worked out as Lichess does from Stockfish's evaluations) is averaged over the model's finished games in this time control that Stockfish has analyzed.${pending}`,
+        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count for the ratings. ` +
+        `Illegal is the share of the moves a model tried that were illegal (three unusable replies in a row count as one), and Accuracy ` +
+        `(0 to 100%, worked out as Lichess does from Stockfish's evaluations) its average over the games Stockfish has analyzed: both over its finished games in the time control, ` +
+        `a model playing itself included. All puts every time control together.${pending}`,
     ),
   ];
+}
+
+/** A cell with the share of a model's moves that were illegal: "1.5%", or a dash when it tried none. */
+function illegalCell(rate) {
+  if (!rate || rate.percent === null) return h("td", { class: "num muted" }, "–");
+  const title = `${count(rate.illegal, "illegal move", "illegal moves")} in ${count(rate.tried, "move", "moves")} tried, over ${count(rate.games, "finished game", "finished games")}`;
+  return h("td", { class: "num", title }, formatPercent(rate.percent));
 }
 
 /** An average accuracy cell: "87.3%", or a dash before any game has been analyzed. */
@@ -558,7 +579,7 @@ function accuracyCell(average, analysis, where) {
     const why = analysis ? `None of its ${where} has been analyzed yet` : "Stockfish analysis is turned off in config.ini";
     return h("td", { class: "num muted", title: why }, "–");
   }
-  return h("td", { class: "num", title: `Average over ${count(average.games, "analyzed game", "analyzed games")}` }, formatAccuracy(average.accuracy));
+  return h("td", { class: "num", title: `Average over ${count(average.games, "analyzed game", "analyzed games")}` }, formatPercent(average.accuracy));
 }
 
 function ratingsTable(models, analysis) {
@@ -577,7 +598,7 @@ function ratingsTable(models, analysis) {
           {},
           h("th", { class: "num" }, "#"),
           h("th", {}, "Model"),
-          ["Rating", "Games", "Won", "Drawn", "Lost", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
+          ["Rating", "Games", "Won", "Drawn", "Lost", "Illegal", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
         ),
       ),
       h(
@@ -594,7 +615,45 @@ function ratingsTable(models, analysis) {
             num(m.wins),
             num(m.draws),
             num(m.losses),
+            illegalCell(m.illegalMoves),
             accuracyCell(m.accuracy, analysis, "finished games in this time control"),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/** Every model's figures over all its finished games, whatever the time control. */
+function overallTable(models, analysis) {
+  const num = (value) => h("td", { class: "num" }, value);
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      { class: "ratings" },
+      h(
+        "thead",
+        {},
+        h(
+          "tr",
+          {},
+          h("th", {}, "Model"),
+          ["Games", "Illegal", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
+        ),
+      ),
+      h(
+        "tbody",
+        {},
+        models.map((m) =>
+          h(
+            "tr",
+            {},
+            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
+            num(m.games),
+            illegalCell(m.illegalMoves),
+            accuracyCell(m.accuracy, analysis, "finished games"),
           ),
         ),
       ),
@@ -1035,6 +1094,7 @@ function showTournament(id) {
         "p",
         { class: "muted note" },
         `A win scores 1 and a draw ½; aborted games count for nobody. Ties are broken by Sonneborn-Berger (SB: the points of the models a model beat, plus half the points of those it drew with), then by wins. ` +
+          `Illegal is the share of the moves the model tried in its finished games in this tournament that were illegal. ` +
           `Accuracy (0 to 100%, worked out as Lichess does from Stockfish's evaluations) is averaged over the model's finished games in this tournament that Stockfish has analyzed. ` +
           `Rating is the model's ${t.timeControl.category} rating now, with what this tournament's games did to it.`,
       ),
@@ -1088,6 +1148,7 @@ function standingsTable(standings, category, analysis) {
           h("th", {}, "Model"),
           ["Points", "Played", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
           h("th", { class: "num" }, h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB")),
+          h("th", { class: "num" }, "Illegal"),
           h("th", { class: "num" }, "Accuracy"),
           h("th", { class: "num" }, "Rating"),
         ),
@@ -1107,6 +1168,7 @@ function standingsTable(standings, category, analysis) {
             num(s.draws),
             num(s.losses),
             num(sb(s.tiebreak)),
+            s.played ? illegalCell(s.illegalMoves) : num(""),
             s.played ? accuracyCell(s.accuracy, analysis, "finished games in this tournament") : num(""),
             h(
               "td",
@@ -1375,9 +1437,17 @@ function showGame(id) {
       count(side.blunders, "blunder", "blunders"),
     ];
     const title =
-      `Accuracy ${formatAccuracy(side.accuracy)} over ${count(side.moves, "move", "moves")}, from ${analysis.engine} at depth ${analysis.depth}, ` +
+      `Accuracy ${formatPercent(side.accuracy)} over ${count(side.moves, "move", "moves")}, from ${analysis.engine} at depth ${analysis.depth}, ` +
       `worked out as Lichess does. ${capitalize(listing(judged))}; average centipawn loss ${Math.round(side.acpl)}.`;
-    return h("span", { class: "accuracy", title }, `${formatAccuracy(side.accuracy)} accuracy`);
+    return h("span", { class: "accuracy", title }, `${formatPercent(side.accuracy)} accuracy`);
+  }
+
+  /** The player's illegal moves, as a share of the moves it tried, once it has made one. */
+  function illegalTag(color) {
+    const { illegal, tried, percent } = illegalMovesOf(game, color);
+    if (!illegal) return null;
+    const title = `${count(illegal, "illegal move", "illegal moves")} in ${count(tried, "move", "moves")} tried (${formatPercent(percent)})`;
+    return h("span", { class: "illegal", title }, `${illegal} illegal · ${formatPercent(percent)}`);
   }
 
   function spendBadge(spend) {
@@ -1385,7 +1455,7 @@ function showGame(id) {
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
   }
 
-  /** Under the name: the player's effort, then the pieces it has captured. */
+  /** Under the name: the player's effort, accuracy and illegal moves, then the pieces it has captured. */
   function materialRow(color, material) {
     const taken = material.captured[color];
     const lead = color === "white" ? material.diff : -material.diff;
@@ -1399,6 +1469,7 @@ function showGame(id) {
       { class: "material", title: taken.length ? `Captured: ${names}` : "" },
       effortTag(color),
       accuracyTag(color),
+      illegalTag(color),
       groups,
       lead > 0 ? h("span", { class: "lead" }, `+${lead}`) : null,
     );
@@ -1407,7 +1478,6 @@ function showGame(id) {
   function playerBar(bar, color, material) {
     bar.dataset.color = color;
     const spec = game[color];
-    const illegal = game.illegalMoves[color];
     const offer = game.status === "running" && game.pendingDrawOffer === color;
     setChildren(
       bar,
@@ -1422,7 +1492,6 @@ function showGame(id) {
           ratings ? ratingTag(ratings[color]) : null,
           h("span", { class: "muted provider" }, PROVIDER_NAMES[spec.provider] ?? spec.provider),
           spendBadge(game.spend?.[color]),
-          illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
           offer ? h("span", { class: "badge" }, "offers a draw") : null,
         ),
         materialRow(color, material),

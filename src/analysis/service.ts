@@ -3,7 +3,7 @@ import path from "node:path";
 import { Chess } from "chess.js";
 import type { AnalysisSettings } from "../config.js";
 import type { GameService } from "../game/service.js";
-import { opponent, type Color, type GameRecord, type PlayerSpec } from "../game/types.js";
+import { opponent, playerKey, type Color, type GameRecord } from "../game/types.js";
 import { TIME_CATEGORIES, type TimeCategory } from "../timeControl.js";
 import { accuracyReport, averageAccuracy, type AccuracyAverage, type MoveReport, type PositionEval, type SideReport } from "./accuracy.js";
 import { UciEngine, type Engine, type SearchResult } from "./engine.js";
@@ -45,10 +45,6 @@ export type GameAnalysisView =
 
 /** Each player's accuracy over several games, by "provider:model". */
 export type PlayerAccuracies = Map<string, AccuracyAverage>;
-
-export function playerKey(player: PlayerSpec): string {
-  return `${player.provider}:${player.model}`;
-}
 
 /** Saves each game's analysis as <games dir>/analysis/<game id>.json. */
 export class AnalysisStore {

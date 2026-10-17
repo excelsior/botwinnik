@@ -505,11 +505,14 @@ describe("tournament API", () => {
   });
 });
 
-describe("accuracy API", () => {
+describe("accuracy and illegal moves API", () => {
   let dir: string;
   let base: string;
   let close: () => void;
+  let games: GameService;
   let analysis: AnalysisService;
+  /** A model that tries one illegal move. */
+  const SLOPPY: PlayerSpec = { provider: "anthropic", model: "claude-sloppy" };
   /** Holds the engine's searches while set. */
   let hold: Promise<void> | null = null;
   let release = () => {};
@@ -530,7 +533,10 @@ describe("accuracy API", () => {
 
   before(async () => {
     dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
-    const games = new GameService(new GameStore(dir), (spec) => new FoolsMatePlayer(spec, async () => void (await moves)));
+    games = new GameService(new GameStore(dir), (spec) =>
+      // Tries 2. Qh5 before 2. g4.
+      spec.model === SLOPPY.model ? new ScriptedPlayer(spec, ["f3", "Qh5", "g4"]) : new FoolsMatePlayer(spec, async () => void (await moves)),
+    );
     analysis = new AnalysisService(games, { depth: 12 }, { startEngine: async () => engine });
     analysis.start();
     const server = createServer(games, { providers, loopbackOnly: true, analysis });
@@ -621,10 +627,12 @@ describe("accuracy API", () => {
 
     const ratings = await (await fetch(`${base}/api/ratings`)).json();
     assert.deepEqual(ratings.analysis, { depth: 12, pending: 0 });
-    const blitz = Object.fromEntries(ratings.categories.blitz.map((m: { model: string; accuracy: unknown }) => [m.model, m.accuracy]));
+    const blitz = Object.fromEntries(
+      ratings.categories.blitz.map((m: { model: string; accuracy: unknown; illegalMoves: unknown }) => [m.model, [m.accuracy, m.illegalMoves]]),
+    );
     assert.deepEqual(blitz, {
-      "claude-test": { accuracy: final.white.accuracy, games: 1 },
-      "gpt-test": { accuracy: final.black.accuracy, games: 1 },
+      "claude-test": [{ accuracy: final.white.accuracy, games: 1 }, { games: 1, illegal: 0, tried: 2, percent: 0 }],
+      "gpt-test": [{ accuracy: final.black.accuracy, games: 1 }, { games: 1, illegal: 0, tried: 2, percent: 0 }],
     });
   });
 
@@ -641,11 +649,39 @@ describe("accuracy API", () => {
     await analysis.whenIdle();
     view = await (await fetch(`${base}/api/tournaments/${tournament.id}`)).json();
     assert.deepEqual(view.analysis, { depth: 12, pending: 0 });
-    for (const row of view.standings) assert.equal(row.accuracy.games, 2, `${row.model} played two games`);
+    for (const row of view.standings) {
+      assert.equal(row.accuracy.games, 2, `${row.model} played two games`);
+      assert.deepEqual(row.illegalMoves, { games: 2, illegal: 0, tried: 4, percent: 0 });
+    }
     // Each model won its game as Black with every move as good as the engine's, and lost the other.
     const bullet = (await (await fetch(`${base}/api/ratings`)).json()).categories.bullet;
     for (const row of view.standings) {
       assert.equal(row.accuracy.accuracy, bullet.find((m: { model: string }) => m.model === row.model).accuracy.accuracy);
     }
+  });
+
+  it("counts each model's illegal moves by time control and over every time control", async () => {
+    const started = games.start({ timeControl: "10+0", players: [SLOPPY, GPT], firstPlayerColor: "white" });
+    const game = (await games.wait(started.id))!;
+    assert.deepEqual([game.result, game.illegalMoves], ["0-1", { white: 1, black: 0 }]);
+    await analysis.whenIdle();
+
+    const ratings = await (await fetch(`${base}/api/ratings`)).json();
+    const rapid = Object.fromEntries(ratings.categories.rapid.map((m: { model: string; illegalMoves: unknown }) => [m.model, m.illegalMoves]));
+    assert.deepEqual(rapid, {
+      "claude-sloppy": { games: 1, illegal: 1, tried: 3, percent: 100 / 3 },
+      "gpt-test": { games: 1, illegal: 0, tried: 2, percent: 0 },
+    });
+    // The blitz game, the tournament's bullet games and this one, most games first.
+    const overall = ratings.overall as { model: string; games: number; illegalMoves: { illegal: number; tried: number }; accuracy?: { games: number } }[];
+    assert.deepEqual(
+      overall.map((m) => [m.model, m.games, m.illegalMoves.illegal, m.illegalMoves.tried, m.accuracy?.games]),
+      [
+        ["gpt-test", 4, 0, 8, 4],
+        ["claude-test", 3, 0, 6, 3],
+        ["claude-opus", 2, 0, 4, 2],
+        ["claude-sloppy", 1, 1, 3, 1],
+      ],
+    );
   });
 });

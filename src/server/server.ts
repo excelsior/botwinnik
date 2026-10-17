@@ -3,14 +3,16 @@ import { readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { playerKey, type AnalysisService } from "../analysis/service.js";
+import type { AnalysisService } from "../analysis/service.js";
 import { PROVIDER_LABELS, PROVIDERS, type AppConfig, type Provider } from "../config.js";
+import { illegalMoveRatesByCategory, modelTotals } from "../game/illegalMoves.js";
 import { toPgn } from "../game/pgn.js";
 import { PgnImportError } from "../game/pgnImport.js";
 import { K_FACTOR, rateGames, START_RATING, type GameRatings } from "../game/ratings.js";
 import type { GameService, StartGameRequest } from "../game/service.js";
-import type { GameRecord, PlayerSpec } from "../game/types.js";
+import { playerKey, type GameRecord, type PlayerSpec } from "../game/types.js";
 import { suggestModels, type ModelOption } from "../players/models.js";
+import type { TimeCategory } from "../timeControl.js";
 import { TournamentService, type CreateTournamentRequest } from "../tournament/service.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
@@ -172,13 +174,20 @@ async function handle(
   if (parts[1] === "ratings" && parts.length === 2 && method === "GET") {
     const records = service.records();
     const accuracy = options.analysis?.byCategory(records);
+    const illegal = illegalMoveRatesByCategory(records);
     const categories = Object.fromEntries(
       Object.entries(rateGames(records).tables()).map(([category, models]) => [
         category,
-        models.map((m) => ({ ...m, accuracy: accuracy?.[category as keyof typeof accuracy].get(playerKey(m)) })),
+        models.map((m) => ({
+          ...m,
+          accuracy: accuracy?.[category as TimeCategory].get(playerKey(m)),
+          illegalMoves: illegal[category as TimeCategory].get(playerKey(m)),
+        })),
       ]),
     );
-    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories, analysis: analysisInfo(options.analysis) });
+    // Every time control together.
+    const overall = modelTotals(records, options.analysis?.averages(records));
+    return sendJson(res, 200, { start: START_RATING, k: K_FACTOR, categories, overall, analysis: analysisInfo(options.analysis) });
   }
 
   if (parts[1] === "tournaments") return handleTournaments(tournaments, options, req, res, parts);

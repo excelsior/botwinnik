@@ -1,4 +1,5 @@
 import type { AccuracyAverage } from "../analysis/accuracy.js";
+import type { IllegalMoveRate } from "../game/illegalMoves.js";
 import type { GameRatings } from "../game/ratings.js";
 import type { GameRecord, PlayerSpec } from "../game/types.js";
 import type { TimeCategory } from "../timeControl.js";
@@ -53,6 +54,8 @@ export interface Standing extends PlayerSpec {
   rating?: { now: number; change: number };
   /** Its average accuracy over the tournament's games that Stockfish has analyzed. */
   accuracy?: AccuracyAverage;
+  /** Its illegal moves in the tournament's finished games. */
+  illegalMoves?: IllegalMoveRate;
 }
 
 /** Whether a pairing's game is over (or gone), so the round can move on. */
