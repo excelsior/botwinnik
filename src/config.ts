@@ -27,6 +27,16 @@ export interface ProviderConfig extends Credentials {
   effort: EffortByCategory;
 }
 
+/** How finished games are analyzed for the players' accuracy. */
+export interface AnalysisSettings {
+  /** A UCI engine's executable, such as a native Stockfish; undefined for the bundled Stockfish. */
+  engine?: string;
+  /** How many plies deep the engine searches each position. */
+  depth: number;
+}
+
+export const DEFAULT_ANALYSIS_DEPTH = 18;
+
 export interface AppConfig {
   /** Only providers that have an API key are present. */
   providers: Partial<Record<Provider, ProviderConfig>>;
@@ -35,6 +45,8 @@ export interface AppConfig {
   gamesDir: string;
   /** Prices from the [prices] section, keyed by lowercase model ID. */
   prices: Record<string, ModelPrice>;
+  /** From the [analysis] section; null when it turns analysis off. */
+  analysis: AnalysisSettings | null;
 }
 
 export const DEFAULT_MODELS: Record<Provider, string[]> = {
@@ -119,7 +131,24 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     port,
     gamesDir: path.resolve(baseDir, app.games_dir?.trim() || "games"),
     prices: parsePrices(ini.prices ?? {}),
+    analysis: analysisSettings(ini.analysis ?? {}, baseDir),
   };
+}
+
+/**
+ * `engine` empty for the bundled Stockfish, "off" for no analysis, or an
+ * engine's executable: a path (relative to config.ini) or a command on the PATH.
+ */
+function analysisSettings(section: Record<string, string>, baseDir: string): AnalysisSettings | null {
+  const engine = section.engine?.trim() ?? "";
+  if (/^(off|none|no|false)$/i.test(engine)) return null;
+  const depthText = section.depth?.trim();
+  const depth = depthText ? Number(depthText) : DEFAULT_ANALYSIS_DEPTH;
+  if (!Number.isInteger(depth) || depth < 1 || depth > 99) {
+    throw new ConfigError(`[analysis] depth must be a whole number from 1 to 99, got "${section.depth}"`);
+  }
+  if (!engine) return { depth };
+  return { engine: /[\\/]/.test(engine) ? path.resolve(baseDir, engine) : engine, depth };
 }
 
 function effortSetting(provider: Provider, value: string | undefined): EffortByCategory {

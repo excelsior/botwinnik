@@ -190,6 +190,17 @@ describe("config", () => {
     assert.throws(() => effort("minimal"), /"minimal" isn't a level; use low, medium, high, xhigh, max, default/);
   });
 
+  it("reads the analysis settings", () => {
+    const analysis = (section: string) => configFromIni(parseIni(`[openai]\napi_key = k\n${section}`), "/srv").analysis;
+    assert.deepEqual(analysis(""), { depth: 18 }, "the bundled Stockfish by default");
+    assert.deepEqual(analysis("[analysis]\nengine =\ndepth = 12\n"), { depth: 12 });
+    assert.deepEqual(analysis("[analysis]\nengine = stockfish\n"), { engine: "stockfish", depth: 18 }, "a command on the PATH");
+    assert.deepEqual(analysis("[analysis]\nengine = bin/stockfish\n"), { engine: "/srv/bin/stockfish", depth: 18 }, "next to config.ini");
+    assert.equal(analysis("[analysis]\nengine = off\n"), null);
+    assert.throws(() => analysis("[analysis]\ndepth = deep\n"), /\[analysis\] depth must be a whole number from 1 to 99, got "deep"/);
+    assert.throws(() => analysis("[analysis]\ndepth = 0\n"), /depth/);
+  });
+
   it("parses player specs", () => {
     assert.deepEqual(parsePlayerSpec("claude-opus-5-5"), { provider: "anthropic", model: "claude-opus-5-5" });
     assert.deepEqual(parsePlayerSpec("gpt-5.6-sol"), { provider: "openai", model: "gpt-5.6-sol" });

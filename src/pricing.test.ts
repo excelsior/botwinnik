@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { configFromIni, parseIni } from "./config.js";
-import { addSpend, costOf, emptySpend, findPrice, formatUsd, spendOf } from "./pricing.js";
+import { addSpend, costOf, emptySpend, findPrice, formatUsd, priceSpend, spendOf } from "./pricing.js";
 
 describe("pricing", () => {
   it("finds built-in prices, config overrides, and dated snapshots", () => {
@@ -46,6 +46,16 @@ describe("pricing", () => {
     assert.equal(total.inputTokens, 2400);
     assert.ok(Math.abs(total.costUsd! - 0.0108) < 1e-12);
     assert.equal(addSpend(total, unpriced).costUsd, null);
+  });
+
+  it("prices a spend saved with an unknown cost once its model has a price", () => {
+    const price = { input: 2, output: 10, cachedInput: 0.5 };
+    const unpriced = { calls: 2, inputTokens: 3000, cachedInputTokens: 1000, outputTokens: 400, costUsd: null };
+    assert.deepEqual(priceSpend(unpriced, price), { ...unpriced, costUsd: (2000 * 2 + 1000 * 0.5 + 400 * 10) / 1e6 });
+    assert.equal(priceSpend(unpriced, undefined).costUsd, null);
+    const known = { ...unpriced, costUsd: 0.5 };
+    assert.equal(priceSpend(known, price), known, "a cost worked out during the game stays as it was");
+    assert.equal(priceSpend(spendOf(undefined, undefined), price).costUsd, null, "no usage report means unknown cost");
   });
 
   it("formats dollars", () => {

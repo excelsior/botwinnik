@@ -103,6 +103,8 @@ describe("tournaments", () => {
     for (const s of view.standings) {
       assert.equal(s.rating?.now, blitz.find((m) => m.model === s.model)?.rating);
       assert.equal(s.rating!.now - 1500, s.rating!.change, "every rated game was in the tournament");
+      assert.equal(s.spend?.calls, 4);
+      assert.ok(Math.abs(s.spend!.costUsd! - 0.04) < 1e-9, "two moves at $0.01 in each of its two games");
     }
 
     const [summary] = tournaments.list();

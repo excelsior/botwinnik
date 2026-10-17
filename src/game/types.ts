@@ -18,6 +18,11 @@ export interface PlayerSpec {
   model: string;
 }
 
+/** "provider:model": what tables of per-model figures are keyed by. */
+export function playerKey(player: PlayerSpec): string {
+  return `${player.provider}:${player.model}`;
+}
+
 export type GameResult = "1-0" | "0-1" | "1/2-1/2" | "*";
 
 export type TerminationReason =
