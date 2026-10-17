@@ -371,7 +371,9 @@ their round until they are resumed. Tournaments are saved as
 
 The standings also show the share of each model's moves in its tournament
 games that were illegal (see Illegal moves), and its accuracy over those
-that Stockfish has analyzed (see Accuracy).
+that Stockfish has analyzed (see Accuracy). A click on a column's header
+sorts the standings by it (a second click the other way), and the page
+remembers the choice.
 
 ## Saved games and PGN
 

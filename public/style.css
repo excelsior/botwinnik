@@ -1211,6 +1211,32 @@ table.games td .sub {
   margin-bottom: 4px;
 }
 
+/* Column headers that sort the table, looking like plain headers. */
+table.standings th.sortable {
+  padding: 0;
+}
+
+table.standings button.sort {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 8px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-weight: inherit;
+  color: inherit;
+}
+
+table.standings button.sort:hover,
+table.standings th[aria-sort] button.sort {
+  color: var(--text);
+}
+
+table.standings .sort-mark {
+  font-size: 9px;
+}
+
 table.standings .rating-change {
   display: inline-block;
   min-width: 3.2em;
