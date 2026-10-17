@@ -1,0 +1,43 @@
+# Botwinnik on a server, behind Caddy, which serves it over HTTPS and asks for
+# a login. See "Running on a server" in README.md. The API keys come from
+# config.ini, the domain and the login from .env (see .env.example).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    volumes:
+      # Long syntax, so a missing config.ini is an error rather than an empty
+      # directory Docker makes in its place.
+      - type: bind
+        source: ./config.ini
+        target: /app/config.ini
+        read_only: true
+        bind:
+          create_host_path: false
+      - games:/data/games
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env (see .env.example)}
+      LOGIN_USER: ${LOGIN_USER:?Set LOGIN_USER in .env (see .env.example)}
+      LOGIN_PASSWORD_HASH: ${LOGIN_PASSWORD_HASH:?Set LOGIN_PASSWORD_HASH in .env (see .env.example)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  # The saved games and tournaments.
+  games:
+  # Caddy's certificates.
+  caddy_data:
+  caddy_config:

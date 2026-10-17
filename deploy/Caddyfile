@@ -1,0 +1,9 @@
+# Serves Botwinnik at $DOMAIN over HTTPS, with a certificate Caddy gets from
+# Let's Encrypt, to those who log in as $LOGIN_USER. The settings come from
+# .env (see .env.example).
+{$DOMAIN} {
+	basic_auth {
+		{$LOGIN_USER} {$LOGIN_PASSWORD_HASH}
+	}
+	reverse_proxy app:3000
+}

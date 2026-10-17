@@ -150,13 +150,30 @@ export function defaultConfigPath(): string {
   return path.resolve(process.env.BOTWINNIK_CONFIG ?? "config.ini");
 }
 
-export function loadConfig(file = defaultConfigPath()): AppConfig {
+export function loadConfig(file = defaultConfigPath(), env = process.env): AppConfig {
   if (!existsSync(file)) {
     throw new ConfigError(
       `No config file at ${file}. Copy config.example.ini to config.ini and add at least one API key.`,
     );
   }
-  return configFromIni(parseIni(readFileSync(file, "utf8")), path.dirname(file));
+  return configFromIni(withAppEnv(parseIni(readFileSync(file, "utf8")), env), path.dirname(file));
+}
+
+const APP_ENV: Record<string, string> = { host: "BOTWINNIK_HOST", port: "BOTWINNIK_PORT", games_dir: "BOTWINNIK_GAMES_DIR" };
+
+/**
+ * BOTWINNIK_HOST, BOTWINNIK_PORT and BOTWINNIK_GAMES_DIR, when set, take the
+ * place of [app]'s host, port and games_dir. The Docker image sets them: in a
+ * container, the image decides where the app listens and keeps its games,
+ * whatever the config.ini mounted into it says.
+ */
+export function withAppEnv(ini: IniData, env: NodeJS.ProcessEnv): IniData {
+  const app = { ...ini.app };
+  for (const [key, name] of Object.entries(APP_ENV)) {
+    const value = env[name]?.trim();
+    if (value) app[key] = value;
+  }
+  return { ...ini, app };
 }
 
 /**
