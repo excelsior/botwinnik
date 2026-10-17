@@ -99,6 +99,30 @@ function formatUsd(usd) {
   return usd < 0.1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
+/** "87.3%", "1.5%". */
+function formatPercent(percent) {
+  return `${percent.toFixed(1)}%`;
+}
+
+/** A side's illegal moves in a game, out of the moves it tried (legal or not), as the server counts them. */
+function illegalMovesOf(game, color) {
+  const illegal = game.illegalMoves[color];
+  const tried = game.moves.filter((m) => m.color === color).length + illegal;
+  return { illegal, tried, percent: tried ? (100 * illegal) / tried : null };
+}
+
+/** "1 inaccuracy", "2 mistakes". */
+function count(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** An evaluation from White's side in words: "+1.3", "White mates in 3", "checkmate". */
+function describeEval(evaluation) {
+  if (evaluation.mate === 0) return "checkmate";
+  if (evaluation.mate !== undefined) return `${evaluation.mate > 0 ? "White" : "Black"} mates in ${Math.abs(evaluation.mate)}`;
+  return evalLabel(evaluation);
+}
+
 /** Mentions a call the game stopped waiting for whose cost isn't in yet. */
 function unfinishedNote(game) {
   if (!game.unfinishedCall) return "";
@@ -111,6 +135,13 @@ function totalCost(game) {
 }
 
 const UNKNOWN_PRICE = "Price unknown for this model: add it under [prices] in config.ini";
+
+/** "12 API calls, 9,400 input / 1,200 output tokens", for a cost's tooltip. */
+function spendTitle(spend) {
+  const calls = `${spend.calls} API call${spend.calls === 1 ? "" : "s"}`;
+  const tokens = `${spend.inputTokens.toLocaleString()} input / ${spend.outputTokens.toLocaleString()} output tokens`;
+  return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
+}
 
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -163,6 +194,7 @@ async function showHome() {
   );
 
   let ratedGames = null; // the finished games the ratings shown were worked out from
+  let analyzing = false; // whether Stockfish was still analyzing games, so the accuracy shown can change
   const refresh = async () => {
     let games;
     try {
@@ -172,12 +204,14 @@ async function showHome() {
       gamesSection.replaceChildren(h("h2", {}, "Games"), h("p", { class: "error" }, err.message));
       return;
     }
-    // Ratings only change when a game finishes.
+    // Ratings only change when a game finishes, and accuracy when Stockfish has analyzed one.
     const finished = games.filter((g) => g.status === "finished").map((g) => g.id).join();
-    if (finished === ratedGames) return;
+    if (finished === ratedGames && !analyzing) return;
     try {
-      ratingsSection.replaceChildren(...ratingsCard(await api("/ratings")));
+      const ratings = await api("/ratings");
+      ratingsSection.replaceChildren(...ratingsCard(ratings));
       ratedGames = finished;
+      analyzing = (ratings.analysis?.pending ?? 0) > 0;
     } catch (err) {
       ratingsSection.replaceChildren(h("h2", {}, "Ratings"), h("p", { class: "error" }, err.message));
     }
@@ -464,17 +498,20 @@ const RATINGS_TAB_SETTING = "botwinnik.ratingsTab";
 
 /**
  * The ratings card's contents: a tab per time category, each with its own
- * table. `categories` maps bullet, blitz, rapid and classical to their models.
+ * table, and one for every time control together. `categories` maps bullet,
+ * blitz, rapid and classical to their models; `overall` is every model's
+ * figures over all its games.
  */
-function ratingsCard({ start, k, categories }) {
-  const order = Object.keys(categories);
+function ratingsCard({ start, k, categories, overall, analysis }) {
+  const rated = Object.keys(categories);
   const gamesIn = (c) => categories[c].reduce((sum, m) => sum + m.games, 0) / 2;
-  if (!order.some(gamesIn)) {
+  if (!rated.some(gamesIn)) {
     return [h("h2", {}, "Ratings"), h("p", { class: "muted" }, `No rated games yet. Every model starts at ${start} in each time control.`)];
   }
+  const order = [...rated, "all"];
   // The tab picked last time, or the time control with the most games.
   let current = loadSetting(RATINGS_TAB_SETTING, null);
-  if (!order.includes(current)) current = order.reduce((best, c) => (gamesIn(c) > gamesIn(best) ? c : best));
+  if (!order.includes(current)) current = rated.reduce((best, c) => (gamesIn(c) > gamesIn(best) ? c : best));
 
   const panel = h("div", { role: "tabpanel", id: "ratings-panel" });
   const tabs = order.map((c) =>
@@ -495,7 +532,7 @@ function ratingsCard({ start, k, categories }) {
           tabs[order.indexOf(next)].focus();
         },
       },
-      CATEGORY_NAMES[c] ?? c,
+      c === "all" ? "All" : (CATEGORY_NAMES[c] ?? c),
     ),
   );
   const select = (c) => {
@@ -508,12 +545,17 @@ function ratingsCard({ start, k, categories }) {
     });
     panel.setAttribute("aria-labelledby", `ratings-tab-${c}`);
     panel.replaceChildren(
-      categories[c].length
-        ? ratingsTable(categories[c])
-        : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
+      c === "all"
+        ? overallTable(overall, analysis)
+        : categories[c].length
+          ? ratingsTable(categories[c], analysis)
+          : h("p", { class: "muted" }, `No rated ${c} games yet. Every model starts at ${start}.`),
     );
   };
   select(current);
+  const pending = analysis?.pending
+    ? ` Stockfish is analyzing ${count(analysis.pending, "more game", "more games")}, so these can still change.`
+    : "";
 
   return [
     h("div", { class: "card-head" }, h("h2", {}, "Ratings"), h("div", { class: "chips tabs", role: "tablist", "aria-label": "Time control" }, tabs)),
@@ -523,49 +565,164 @@ function ratingsCard({ start, k, categories }) {
       { class: "muted note" },
       `Elo ratings from finished games, in the order they ended, kept separately for each time control. ` +
         `A game's time control counts its base time plus 60 increments: under 3 minutes is bullet, under 10 blitz, under 60 rapid, and 60 or more classical. ` +
-        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count.`,
+        `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count for the ratings. ` +
+        `Illegal is the share of the moves a model tried that were illegal (three unusable replies in a row count as one), and Accuracy ` +
+        `(0 to 100%, worked out as Lichess does from Stockfish's evaluations) its average over the games Stockfish has analyzed: both over its finished games in the time control, ` +
+        `a model playing itself included. All puts every time control together. Click a column's header to sort by it, and again to reverse.${pending}`,
     ),
   ];
 }
 
-function ratingsTable(models) {
-  const num = (value) => h("td", { class: "num" }, value);
-  return h(
-    "div",
-    { class: "table-wrap" },
-    h(
-      "table",
-      { class: "ratings" },
-      h(
-        "thead",
-        {},
+/** A cell with the share of a model's moves that were illegal: "1.5%", or a dash when it tried none. */
+function illegalCell(rate) {
+  if (!rate || rate.percent === null) return h("td", { class: "num muted" }, "–");
+  const title = `${count(rate.illegal, "illegal move", "illegal moves")} in ${count(rate.tried, "move", "moves")} tried, over ${count(rate.games, "finished game", "finished games")}`;
+  return h("td", { class: "num", title }, formatPercent(rate.percent));
+}
+
+/** An average accuracy cell: "87.3%", or a dash before any game has been analyzed. */
+function accuracyCell(average, analysis, where) {
+  if (!average) {
+    const why = analysis ? `None of its ${where} has been analyzed yet` : "Stockfish analysis is turned off in config.ini";
+    return h("td", { class: "num muted", title: why }, "–");
+  }
+  return h("td", { class: "num", title: `Average over ${count(average.games, "analyzed game", "analyzed games")}` }, formatPercent(average.accuracy));
+}
+
+/** The sorts picked on this page, by setting, for when the browser doesn't keep settings. */
+const sortsPicked = {};
+
+/**
+ * A table sortable by any column: a click on a column's header sorts by it
+ * (names A to Z and places from first, everything else from the most), and a
+ * second click the other way. Rows without a value for the column (null) go
+ * last either way, and ties keep the rows' own order. The choice is kept
+ * under `setting`, so it survives the page redrawing the table.
+ *
+ * Each column: { key, label, title?, text? (sorts as text), ascending?
+ * (sorts up first), value(row, i), cell(row, i) }, where i is the row's place
+ * in `rows`.
+ */
+function sortableTable({ className, columns, rows, setting, initial }) {
+  const wrap = h("div", { class: "table-wrap" });
+  const current = () => {
+    const [key, direction] = String(sortsPicked[setting] ?? loadSetting(setting, "")).split(":");
+    return columns.some((c) => c.key === key) ? { key, descending: direction === "desc" } : initial;
+  };
+
+  const draw = (focus) => {
+    const sort = current();
+    const column = columns.find((c) => c.key === sort.key);
+    const sorted = rows.map((row, i) => ({ row, i, value: column.value(row, i) }));
+    sorted.sort((a, b) => {
+      if (a.value === null || b.value === null) return (a.value === null) - (b.value === null) || a.i - b.i;
+      const order = column.text ? a.value.localeCompare(b.value) : a.value - b.value;
+      return (sort.descending ? -order : order) || a.i - b.i;
+    });
+    const header = (c) => {
+      const active = c.key === sort.key;
+      const ascendingFirst = c.text || c.ascending;
+      const next = active ? (sort.descending ? "ascending" : "descending") : ascendingFirst ? "ascending" : "descending";
+      const mark = h("span", { class: "sort-mark", "aria-hidden": "true" }, active ? (sort.descending ? "▼" : "▲") : "");
+      return h(
+        "th",
+        { class: c.text ? "sortable" : "num sortable", "aria-sort": active ? (sort.descending ? "descending" : "ascending") : null },
         h(
-          "tr",
-          {},
-          h("th", { class: "num" }, "#"),
-          h("th", {}, "Model"),
-          ["Rating", "Games", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
+          "button",
+          {
+            type: "button",
+            class: "sort",
+            "data-sort": c.key,
+            title: `${c.title ?? c.label}: sort ${next}`,
+            onclick: () => {
+              sortsPicked[setting] = `${c.key}:${next === "descending" ? "desc" : "asc"}`;
+              saveSetting(setting, sortsPicked[setting]);
+              draw(c.key);
+            },
+          },
+          // Before a right-aligned label, so the label stays over its numbers.
+          c.text ? [c.label, mark] : [mark, c.label],
         ),
-      ),
+      );
+    };
+    wrap.replaceChildren(
       h(
-        "tbody",
-        {},
-        models.map((m, i) =>
-          h(
-            "tr",
-            {},
-            num(i + 1),
-            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
-            h("td", { class: "num rating-cell" }, m.rating),
-            num(m.games),
-            num(m.wins),
-            num(m.draws),
-            num(m.losses),
-          ),
+        "table",
+        { class: className },
+        h("thead", {}, h("tr", {}, columns.map(header))),
+        h(
+          "tbody",
+          {},
+          sorted.map(({ row, i }) => h("tr", {}, columns.map((c) => c.cell(row, i)))),
         ),
       ),
-    ),
-  );
+    );
+    if (focus) wrap.querySelector(`button[data-sort="${focus}"]`)?.focus();
+  };
+  draw();
+  return wrap;
+}
+
+const RATINGS_SORT_SETTING = "botwinnik.ratingsSort";
+const OVERALL_SORT_SETTING = "botwinnik.overallSort";
+
+/** A cell with a number in it. */
+function num(value) {
+  return h("td", { class: "num" }, value);
+}
+
+/** The Model column of a table of models, with the provider on hover. */
+const MODEL_COLUMN = {
+  key: "model",
+  label: "Model",
+  text: true,
+  value: (m) => m.model,
+  cell: (m) => h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
+};
+
+/** A model's illegal-move share, null when it has none. */
+const illegalPercent = (rate) => rate?.percent ?? null;
+
+/** A time category's table, highest rating first to begin with. */
+function ratingsTable(models, analysis) {
+  return sortableTable({
+    className: "ratings",
+    rows: models,
+    setting: RATINGS_SORT_SETTING,
+    initial: { key: "rating", descending: true },
+    columns: [
+      { key: "place", label: "#", title: "Place by rating", ascending: true, value: (m, i) => i, cell: (m, i) => num(i + 1) },
+      MODEL_COLUMN,
+      { key: "rating", label: "Rating", value: (m) => m.rating, cell: (m) => h("td", { class: "num rating-cell" }, m.rating) },
+      { key: "games", label: "Games", value: (m) => m.games, cell: (m) => num(m.games) },
+      { key: "wins", label: "Won", value: (m) => m.wins, cell: (m) => num(m.wins) },
+      { key: "draws", label: "Drawn", value: (m) => m.draws, cell: (m) => num(m.draws) },
+      { key: "losses", label: "Lost", value: (m) => m.losses, cell: (m) => num(m.losses) },
+      { key: "illegal", label: "Illegal", value: (m) => illegalPercent(m.illegalMoves), cell: (m) => illegalCell(m.illegalMoves) },
+      {
+        key: "accuracy",
+        label: "Accuracy",
+        value: (m) => m.accuracy?.accuracy ?? null,
+        cell: (m) => accuracyCell(m.accuracy, analysis, "finished games in this time control"),
+      },
+    ],
+  });
+}
+
+/** Every model's figures over all its finished games, whatever the time control: most games first to begin with. */
+function overallTable(models, analysis) {
+  return sortableTable({
+    className: "ratings",
+    rows: models,
+    setting: OVERALL_SORT_SETTING,
+    initial: { key: "games", descending: true },
+    columns: [
+      MODEL_COLUMN,
+      { key: "games", label: "Games", value: (m) => m.games, cell: (m) => num(m.games) },
+      { key: "illegal", label: "Illegal", value: (m) => illegalPercent(m.illegalMoves), cell: (m) => illegalCell(m.illegalMoves) },
+      { key: "accuracy", label: "Accuracy", value: (m) => m.accuracy?.accuracy ?? null, cell: (m) => accuracyCell(m.accuracy, analysis, "finished games") },
+    ],
+  });
 }
 
 function gamesTable(games) {
@@ -958,7 +1115,7 @@ function showTournament(id) {
   const timer = setInterval(refresh, 5000);
   cleanup = () => clearInterval(timer);
 
-  function render({ tournament: t, round, standings, games }) {
+  function render({ tournament: t, round, standings, games, analysis }) {
     title.textContent = t.name;
     document.title = `${t.name} · Botwinnik`;
     const cost = sumCost(Object.values(games));
@@ -996,12 +1153,15 @@ function showTournament(id) {
     setChildren(
       standingsCard,
       h("h2", {}, "Standings"),
-      standingsTable(standings, t.timeControl.category),
+      standingsTable(standings, t.timeControl.category, analysis),
       h(
         "p",
         { class: "muted note" },
         `A win scores 1 and a draw ½; aborted games count for nobody. Ties are broken by Sonneborn-Berger (SB: the points of the models a model beat, plus half the points of those it drew with), then by wins. ` +
-          `Rating is the model's ${t.timeControl.category} rating now, with what this tournament's games did to it.`,
+          `Illegal is the share of the moves the model tried in its finished games in this tournament that were illegal. ` +
+          `Accuracy (0 to 100%, worked out as Lichess does from Stockfish's evaluations) is averaged over the model's finished games in this tournament that Stockfish has analyzed. ` +
+          `Rating is the model's ${t.timeControl.category} rating now, with what this tournament's games did to it. ` +
+          `Click a column's header to sort by it, and again to reverse.`,
       ),
     );
     setChildren(roundsCard, h("h2", {}, "Rounds"), h("div", { class: "rounds" }, t.rounds.map((r, i) => roundBlock(t, r, i + 1, round, games))));
@@ -1032,55 +1192,69 @@ function tournamentState(t, round, standings, games) {
     .join(" ");
 }
 
-function standingsTable(standings, category) {
-  const num = (value) => h("td", { class: "num" }, value);
+const STANDINGS_SORT_SETTING = "botwinnik.standingsSort";
+
+/** The tournament's standings, most points first to begin with (ties as ranked: tiebreak, then wins). */
+function standingsTable(standings, category, analysis) {
   // No places until a game has finished.
   const ranked = standings.some((s) => s.played > 0);
   const sb = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
-  return h(
-    "div",
-    { class: "table-wrap" },
-    h(
-      "table",
-      { class: "ratings standings" },
-      h(
-        "thead",
-        {},
-        h(
-          "tr",
-          {},
-          h("th", { class: "num" }, "#"),
-          h("th", {}, "Model"),
-          ["Points", "Played", "Won", "Drawn", "Lost"].map((t) => h("th", { class: "num" }, t)),
-          h("th", { class: "num" }, h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB")),
-          h("th", { class: "num" }, "Rating"),
-        ),
-      ),
-      h(
-        "tbody",
-        {},
-        standings.map((s) =>
+  // Accuracy and illegal moves mean nothing before a model has finished a game.
+  const played = (s, value) => (s.played ? value : null);
+  return sortableTable({
+    className: "ratings standings",
+    rows: standings,
+    setting: STANDINGS_SORT_SETTING,
+    initial: { key: "points", descending: true },
+    columns: [
+      { key: "rank", label: "#", title: "Place", ascending: true, value: (s, i) => i, cell: (s) => num(ranked ? s.rank : "") },
+      { key: "model", label: "Model", text: true, value: (s) => s.model, cell: (s) => h("td", {}, s.model) },
+      { key: "points", label: "Points", value: (s) => s.points, cell: (s) => h("td", { class: "num rating-cell" }, formatPoints(s.points)) },
+      { key: "played", label: "Played", value: (s) => s.played, cell: (s) => num(s.played) },
+      { key: "wins", label: "Won", value: (s) => s.wins, cell: (s) => num(s.wins) },
+      { key: "draws", label: "Drawn", value: (s) => s.draws, cell: (s) => num(s.draws) },
+      { key: "losses", label: "Lost", value: (s) => s.losses, cell: (s) => num(s.losses) },
+      {
+        key: "tiebreak",
+        label: h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB"),
+        title: "Sonneborn-Berger tiebreak",
+        value: (s) => s.tiebreak,
+        cell: (s) => num(sb(s.tiebreak)),
+      },
+      {
+        key: "illegal",
+        label: "Illegal",
+        value: (s) => played(s, illegalPercent(s.illegalMoves)),
+        cell: (s) => (s.played ? illegalCell(s.illegalMoves) : num("")),
+      },
+      {
+        key: "accuracy",
+        label: "Accuracy",
+        value: (s) => played(s, s.accuracy?.accuracy ?? null),
+        cell: (s) => (s.played ? accuracyCell(s.accuracy, analysis, "finished games in this tournament") : num("")),
+      },
+      {
+        key: "rating",
+        label: "Rating",
+        value: (s) => s.rating?.now ?? null,
+        cell: (s) =>
           h(
-            "tr",
-            {},
-            num(ranked ? s.rank : ""),
-            h("td", {}, s.model),
-            h("td", { class: "num rating-cell" }, formatPoints(s.points)),
-            num(s.played),
-            num(s.wins),
-            num(s.draws),
-            num(s.losses),
-            num(sb(s.tiebreak)),
-            h(
-              "td",
-              { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
-              s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
-            ),
+            "td",
+            { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
+            s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
           ),
-        ),
-      ),
-    ),
-  );
+      },
+      {
+        key: "cost",
+        label: "Cost",
+        value: (s) => s.spend?.costUsd ?? null,
+        cell: (s) =>
+          s.spend
+            ? h("td", { class: "num cost", title: `${spendTitle(s.spend)} in this tournament's games` }, formatUsd(s.spend.costUsd))
+            : num(""),
+      },
+    ],
+  });
 }
 
 function ratingChange(delta) {
@@ -1167,6 +1341,7 @@ function showGame(id) {
   let evaluation = null;
   let evalOn = loadSetting(EVAL_SETTING, "on") !== "off";
   let ratings = null; // { white: { before, after? }, black: ... }, or null for an unrated game
+  let analysis = null; // Stockfish's analysis once the game is over: { status, ... }, or null
 
   const boardEl = h("div", { class: "board", role: "img" });
   const evalFill = h("div", { class: "eval-fill" });
@@ -1193,14 +1368,16 @@ function showGame(id) {
     const first = !game;
     game = data.game;
     ratings = data.ratings ?? null;
+    analysis = data.analysis ?? null;
     if (viewPly !== null && viewPly > game.moves.length) viewPly = null;
     if (first) {
       app.replaceChildren(view);
       fitBoard();
     }
     render();
-    // A finished game can still be waiting for a cut-off call's cost.
-    if (game.status !== "running" && !game.unfinishedCall) source.close();
+    // A finished game can still be waiting for a cut-off call's cost, or for Stockfish.
+    const analyzing = analysis?.status === "queued" || analysis?.status === "analyzing";
+    if (game.status !== "running" && !game.unfinishedCall && !analyzing) source.close();
   };
   source.onerror = () => {
     if (!game) {
@@ -1296,12 +1473,6 @@ function showGame(id) {
     }
   }
 
-  function spendTitle(spend) {
-    const calls = `${spend.calls} API call${spend.calls === 1 ? "" : "s"}`;
-    const tokens = `${spend.inputTokens.toLocaleString()} input / ${spend.outputTokens.toLocaleString()} output tokens`;
-    return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
-  }
-
   /** The rating going into the game, and what the game did to it once it's over. */
   function ratingTag({ before, after }) {
     const kind = `${CATEGORY_NAMES[game.timeControl.category] ?? ""} Elo rating`.trim();
@@ -1325,12 +1496,35 @@ function showGame(id) {
     return h("span", { class: "effort", title: `Reasoning effort: ${effort}, set by the time control` }, `${effort} effort`);
   }
 
+  /** The player's accuracy, once Stockfish has analyzed the game. */
+  function accuracyTag(color) {
+    const side = analysis?.status === "done" ? analysis[color] : null;
+    if (side?.accuracy === null || side?.accuracy === undefined) return null;
+    const judged = [
+      count(side.inaccuracies, "inaccuracy", "inaccuracies"),
+      count(side.mistakes, "mistake", "mistakes"),
+      count(side.blunders, "blunder", "blunders"),
+    ];
+    const title =
+      `Accuracy ${formatPercent(side.accuracy)} over ${count(side.moves, "move", "moves")}, from ${analysis.engine} at depth ${analysis.depth}, ` +
+      `worked out as Lichess does. ${capitalize(listing(judged))}; average centipawn loss ${Math.round(side.acpl)}.`;
+    return h("span", { class: "accuracy", title }, `${formatPercent(side.accuracy)} accuracy`);
+  }
+
+  /** The player's illegal moves, as a share of the moves it tried, once it has made one. */
+  function illegalTag(color) {
+    const { illegal, tried, percent } = illegalMovesOf(game, color);
+    if (!illegal) return null;
+    const title = `${count(illegal, "illegal move", "illegal moves")} in ${count(tried, "move", "moves")} tried (${formatPercent(percent)})`;
+    return h("span", { class: "illegal", title }, `${illegal} illegal · ${formatPercent(percent)}`);
+  }
+
   function spendBadge(spend) {
     if (!spend) return null;
     return h("span", { class: "spend muted", title: spendTitle(spend) }, formatUsd(spend.costUsd));
   }
 
-  /** Under the name: the player's effort, then the pieces it has captured. */
+  /** Under the name: the player's effort, accuracy and illegal moves, then the pieces it has captured. */
   function materialRow(color, material) {
     const taken = material.captured[color];
     const lead = color === "white" ? material.diff : -material.diff;
@@ -1343,6 +1537,8 @@ function showGame(id) {
       "div",
       { class: "material", title: taken.length ? `Captured: ${names}` : "" },
       effortTag(color),
+      accuracyTag(color),
+      illegalTag(color),
       groups,
       lead > 0 ? h("span", { class: "lead" }, `+${lead}`) : null,
     );
@@ -1351,7 +1547,6 @@ function showGame(id) {
   function playerBar(bar, color, material) {
     bar.dataset.color = color;
     const spec = game[color];
-    const illegal = game.illegalMoves[color];
     const offer = game.status === "running" && game.pendingDrawOffer === color;
     setChildren(
       bar,
@@ -1366,7 +1561,6 @@ function showGame(id) {
           ratings ? ratingTag(ratings[color]) : null,
           h("span", { class: "muted provider" }, PROVIDER_NAMES[spec.provider] ?? spec.provider),
           spendBadge(game.spend?.[color]),
-          illegal ? h("span", { class: "badge warn", title: "Illegal moves" }, `${illegal} illegal`) : null,
           offer ? h("span", { class: "badge" }, "offers a draw") : null,
         ),
         materialRow(color, material),
@@ -1452,7 +1646,7 @@ function showGame(id) {
       banner.textContent = game.events.findLast((e) => e.type === "paused")?.message ?? "Paused: resume the game to continue it.";
     } else {
       banner.className = `banner ${game.status}`;
-      banner.replaceChildren(h("strong", {}, game.result), " ", game.termination?.message ?? "");
+      setChildren(banner, h("strong", {}, game.result), " ", game.termination?.message ?? "", analysisState());
     }
 
     const shownPly = viewPly ?? game.moves.length;
@@ -1483,6 +1677,32 @@ function showGame(id) {
     );
 
     renderMoves(shownPly);
+  }
+
+  /** Where Stockfish's analysis of the finished game stands, until it's done. */
+  function analysisState() {
+    const text =
+      analysis?.status === "queued"
+        ? "Waiting for Stockfish to analyze this game for the players' accuracy…"
+        : analysis?.status === "analyzing"
+          ? `Stockfish is analyzing this game: ${analysis.progress.done} of ${analysis.progress.total} positions…`
+          : analysis?.status === "failed"
+            ? `Stockfish couldn't analyze this game: ${analysis.error}`
+            : null;
+    return text ? h("span", { class: `analysis-state${analysis.status === "failed" ? " failed" : ""}` }, text) : null;
+  }
+
+  /** Stockfish's verdict on a move: its judgement (?!, ?, ??), and what it would have played. */
+  function moveVerdict(m) {
+    const report = analysis?.status === "done" ? analysis.moves[m.ply - 1] : null;
+    if (!report) return { title: "", mark: null };
+    const chances = `${Math.round(report.winBefore)}% → ${Math.round(report.winAfter)}%`;
+    const best = report.bestSan ? ` Stockfish preferred ${report.bestSan}.` : "";
+    const title = `Stockfish: ${describeEval(report.eval)} after this move. ${capitalize(m.color)}'s winning chances ${chances}, move accuracy ${Math.round(report.accuracy)}%.${best}`;
+    const mark = report.judgement
+      ? h("span", { class: `judgement ${report.judgement}`, title: `${capitalize(report.judgement)}. ${title}` }, JUDGEMENT_MARKS[report.judgement])
+      : null;
+    return { title, mark };
   }
 
   function renderEval(fen) {
@@ -1535,6 +1755,7 @@ function showGame(id) {
       );
     for (const e of game.events.filter((e) => e.ply === 0)) items.push(eventItem(e));
     for (const m of game.moves) {
+      const verdict = moveVerdict(m);
       items.push(
         h(
           "li",
@@ -1548,7 +1769,7 @@ function showGame(id) {
             "div",
             { class: "move-head" },
             h("span", { class: "num" }, `${moveNumberOf(m)}${m.color === "white" ? "." : "…"}`),
-            h("span", { class: "san" }, m.san),
+            h("span", { class: "san", title: verdict.title }, m.san, verdict.mark),
             m.drawOffered ? h("span", { class: "badge" }, "draw offered") : null,
             h(
               "span",
@@ -1588,6 +1809,8 @@ function showGame(id) {
     moveList.scrollTo({ top, behavior: smooth && !REDUCED_MOTION.matches ? "smooth" : "auto" });
   }
 }
+
+const JUDGEMENT_MARKS = { inaccuracy: "?!", mistake: "?", blunder: "??" };
 
 const PIECE_ORDER = ["p", "n", "b", "r", "q"];
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };

@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import type { AnalysisService } from "../analysis/service.js";
+import { illegalMoveRates } from "../game/illegalMoves.js";
 import type { GameService } from "../game/service.js";
-import { summarize, type GameSummary } from "../game/store.js";
-import type { PlayerSpec } from "../game/types.js";
+import { spendByPlayer, summarize, type GameSummary } from "../game/store.js";
+import { playerKey, type PlayerSpec } from "../game/types.js";
 import { parseTimeControl, timeCategory, timeControlLabel } from "../timeControl.js";
 import { roundRobin } from "./schedule.js";
 import { currentRound, isOver, standings, type Standing, type TournamentRecord } from "./tournament.js";
@@ -104,13 +106,20 @@ export class TournamentService {
   private readonly watched = new Set<string>();
   private readonly waiters = new Map<string, ((t: TournamentRecord) => void)[]>();
   private readonly random: () => number;
+  private readonly analysis?: Pick<AnalysisService, "averages">;
 
   constructor(
     private readonly games: GameService,
-    options: { store?: TournamentStore; random?: () => number } = {},
+    options: {
+      store?: TournamentStore;
+      random?: () => number;
+      /** Gives the standings each player's accuracy in the tournament's analyzed games. */
+      analysis?: Pick<AnalysisService, "averages">;
+    } = {},
   ) {
     this.store = options.store ?? new TournamentStore(path.join(games.store.dir, "tournaments"));
     this.random = options.random ?? Math.random;
+    this.analysis = options.analysis;
   }
 
   /**
@@ -210,6 +219,17 @@ export class TournamentService {
         return game ? ratings.forGame(game) : null;
       },
     });
+    const illegal = illegalMoveRates([...records.values()]);
+    const accuracy = this.analysis?.averages([...records.values()]);
+    const spend = spendByPlayer([...records.values()]);
+    for (const row of table) {
+      const rate = illegal.get(playerKey(row));
+      if (rate) row.illegalMoves = rate;
+      const average = accuracy?.get(playerKey(row));
+      if (average) row.accuracy = average;
+      const total = spend.get(playerKey(row));
+      if (total) row.spend = total;
+    }
     const round = currentRound(tournament, (g) => records.get(g));
     return {
       tournament,

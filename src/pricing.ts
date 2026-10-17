@@ -120,6 +120,17 @@ export function spendOf(usage: Usage | undefined, price: ModelPrice | undefined)
   };
 }
 
+/**
+ * A spend saved with an unknown cost, priced from its token counts once its
+ * model has a price. One without tokens (no usage report) stays unknown.
+ * Prompt-cache writes aren't kept in a Spend, so they count as plain input.
+ */
+export function priceSpend(spend: Spend, price: ModelPrice | undefined): Spend {
+  if (spend.costUsd !== null || !price || spend.inputTokens + spend.outputTokens === 0) return spend;
+  const usage = { ...spend, cacheWriteTokens: 0 };
+  return { ...spend, costUsd: costOf(usage, price) };
+}
+
 export function addSpend(a: Spend, b: Spend): Spend {
   return {
     calls: a.calls + b.calls,
