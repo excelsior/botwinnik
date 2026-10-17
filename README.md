@@ -422,8 +422,10 @@ droplet:
    size with 1 GB of memory is enough, since the models do the thinking on
    their providers' servers.
 2. **Point a domain at it** with an A record for the droplet's IP address, at
-   your DNS provider or under Networking › Domains in DigitalOcean. Caddy
-   needs it to get the certificate.
+   your DNS provider or under Networking › Domains in DigitalOcean. Without a
+   domain, use the droplet's IP address as `DOMAIN` in step 4: Let's Encrypt
+   certifies IP addresses too, for six days at a time, and Caddy renews the
+   certificate by itself.
 3. **Get the code onto it.** Log in with `ssh root@<droplet IP>`. If the
    repository is private, give the droplet a deploy key first: run
    `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519` and add what
@@ -439,7 +441,7 @@ droplet:
    ```bash
    cp config.example.ini config.ini && nano config.ini   # the API keys, as under Setup
    docker run --rm -it caddy:2 caddy hash-password       # type the password to log in with
-   cp .env.example .env && nano .env                     # the domain, a user name and that hash
+   cp .env.example .env && nano .env                     # the domain or IP, a user name and that hash
    ```
 
    The hash goes between the single quotes in `.env`, which keep its `$`
@@ -449,8 +451,8 @@ droplet:
    `BOTWINNIK_GAMES_DIR` (which override them anywhere).
 
 5. **Start it** with `docker compose up -d --build`, and open
-   `https://<your domain>/`. It starts again by itself when the droplet
-   reboots.
+   `https://<your domain>/` (or `https://<droplet IP>/`). It starts again by
+   itself when the droplet reboots.
 
 After that, in the `botwinnik` folder:
 
