@@ -409,71 +409,71 @@ with the clocks it had, unless that position already ends the game.
 
 ## Running on a server
 
-`compose.yaml` runs Botwinnik on a Linux server with Docker, behind
-[Caddy](https://caddyserver.com), which serves it over HTTPS with a
-certificate from Let's Encrypt and asks for a login, since anyone who can open
-the page can start games on your API keys. The games are kept in a Docker
-volume, so restarts, rebuilds and updates don't lose them. On a DigitalOcean
-droplet:
+`deploy.sh` puts Botwinnik on a Linux server, such as a DigitalOcean droplet,
+where it runs with Docker behind [Caddy](https://caddyserver.com), which serves
+it over HTTPS with a certificate from Let's Encrypt and asks for a login, since
+anyone who can open the page can start games on your API keys. The games are
+kept in a Docker volume, so restarts, rebuilds and updates don't lose them.
 
-1. **Create the droplet** from the **Docker** image on the Marketplace tab
-   (Ubuntu with Docker and its compose plugin), or from plain Ubuntu and
-   install Docker with `curl -fsSL https://get.docker.com | sh`. The smallest
-   size with 1 GB of memory is enough, since the models do the thinking on
-   their providers' servers.
-2. **Point a domain at it** with an A record for the droplet's IP address, at
-   your DNS provider or under Networking › Domains in DigitalOcean. Without a
-   domain, use the droplet's IP address as `DOMAIN` in step 4: Let's Encrypt
-   certifies IP addresses too, for six days at a time, and Caddy renews the
-   certificate by itself.
-3. **Get the code onto it.** Log in with `ssh root@<droplet IP>`. If the
-   repository is private, give the droplet a deploy key first: run
-   `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519` and add what
-   `cat ~/.ssh/id_ed25519.pub` prints under the repository's Settings ›
-   Deploy keys. Then:
+1. **Create a droplet** with Ubuntu, and with your SSH key, so that
+   `ssh root@<droplet IP>` logs in. The smallest size with 1 GB of memory is
+   enough, since the models do the thinking on their providers' servers.
+2. **Deploy** from this folder, with the API keys in `config.ini` as under
+   Setup:
 
    ```bash
-   git clone git@github.com:excelsior/botwinnik.git && cd botwinnik
+   ./deploy.sh root@<droplet IP>
    ```
 
-4. **Configure it:**
+   The first time, it installs Docker on the droplet and asks for the
+   password the page will ask for (the user is `admin`). Then it copies the
+   latest commit and `config.ini` to `/opt/botwinnik` on the droplet, builds
+   and starts the app there, and waits for `https://<droplet IP>/` to answer.
+   Let's Encrypt certifies IP addresses too, for six days at a time, and Caddy
+   renews the certificate by itself. The app starts again by itself when the
+   droplet reboots.
 
-   ```bash
-   cp config.example.ini config.ini && nano config.ini   # the API keys, as under Setup
-   docker run --rm -it caddy:2 caddy hash-password       # type the password to log in with
-   cp .env.example .env && nano .env                     # the domain or IP, a user name and that hash
-   ```
+Run `./deploy.sh root@<droplet IP>` again to deploy a newer commit or a
+changed `config.ini` (changes you haven't committed stay behind); it keeps the
+login. Restarting the app pauses the games running on it, as any restart does,
+so if there are some, it asks first; resume them on their pages afterwards.
+`--domain chess.example.com` serves the page at a domain instead, once an A
+record points the domain at the droplet (at your DNS provider, or under
+Networking › Domains in DigitalOcean), and later deploys keep it.
+`--password` asks for a new password, and `--user` sets a new user name.
 
-   The hash goes between the single quotes in `.env`, which keep its `$`
-   signs from being read as variables. Both files are git-ignored.
-   `config.ini`'s `host`, `port` and `games_dir` don't apply in Docker: the
-   image sets them with `BOTWINNIK_HOST`, `BOTWINNIK_PORT` and
-   `BOTWINNIK_GAMES_DIR` (which override them anywhere).
-
-5. **Start it** with `docker compose up -d --build`, and open
-   `https://<your domain>/` (or `https://<droplet IP>/`). It starts again by
-   itself when the droplet reboots.
-
-After that, in the `botwinnik` folder:
+On the droplet, in `/opt/botwinnik`:
 
 ```bash
 docker compose logs -f app                             # what the app prints
-docker compose restart app                             # after changing config.ini
-git pull && docker compose up -d --build               # update Botwinnik
+docker compose logs caddy                              # why HTTPS isn't answering, if it isn't
 docker compose exec app npm run botwinnik -- ratings   # the command line, in the container
 docker compose cp app:/data/games ./games-backup       # copy the saved games out
 ```
 
-As with any restart, games running when the app restarts come back paused and
-tournaments carry on. To bring games over from another machine, copy its
-`games` folder to the droplet (say, `scp -r games root@<droplet IP>:botwinnik/`)
-and, in `botwinnik`, hand them to the app:
+`config.ini`'s `host`, `port` and `games_dir` don't apply there: the image sets
+them with `BOTWINNIK_HOST`, `BOTWINNIK_PORT` and `BOTWINNIK_GAMES_DIR` (which
+override them anywhere). Each deploy replaces `config.ini` with yours, so change
+it on your machine. To bring over the games saved on your machine:
 
 ```bash
-docker compose cp ./games/. app:/data/games/
-docker compose exec -u root app chown -R node:node /data/games
-docker compose restart app
+COPYFILE_DISABLE=1 tar --no-xattrs -C games -c . |
+  ssh root@<droplet IP> 'cd /opt/botwinnik && docker compose exec -T app tar -x -C /data/games && docker compose restart app'
 ```
+
+**By hand**, without `deploy.sh`: on a server with Docker and its compose
+plugin, get the code into a folder (cloning a private repository there needs a
+deploy key), and in it:
+
+```bash
+cp config.example.ini config.ini && nano config.ini   # the API keys, as under Setup
+docker run --rm -it caddy:2 caddy hash-password       # type the password to log in with
+cp .env.example .env && nano .env                     # the domain or IP, a user name and that hash
+docker compose up -d --build
+```
+
+The hash goes between the single quotes in `.env`, which keep its `$` signs
+from being read as variables.
 
 ## Development
 

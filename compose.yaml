@@ -1,6 +1,8 @@
 # Botwinnik on a server, behind Caddy, which serves it over HTTPS and asks for
 # a login. See "Running on a server" in README.md. The API keys come from
 # config.ini, the domain and the login from .env (see .env.example).
+# The name keeps the volumes the same, whatever the folder is called.
+name: botwinnik
 services:
   app:
     build: .

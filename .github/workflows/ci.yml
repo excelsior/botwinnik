@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: shellcheck --severity=warning deploy.sh
       - run: docker build -t botwinnik .
       - name: Start the image and load the page
         run: |
