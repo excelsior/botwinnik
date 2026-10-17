@@ -561,7 +561,7 @@ function ratingsCard({ start, k, categories, overall, analysis }) {
         `Every model starts at ${start}, and each game moves its players' ratings by up to ${k} points. Aborted games and a model playing itself don't count for the ratings. ` +
         `Illegal is the share of the moves a model tried that were illegal (three unusable replies in a row count as one), and Accuracy ` +
         `(0 to 100%, worked out as Lichess does from Stockfish's evaluations) its average over the games Stockfish has analyzed: both over its finished games in the time control, ` +
-        `a model playing itself included. All puts every time control together.${pending}`,
+        `a model playing itself included. All puts every time control together. Click a column's header to sort by it, and again to reverse.${pending}`,
     ),
   ];
 }
@@ -582,83 +582,140 @@ function accuracyCell(average, analysis, where) {
   return h("td", { class: "num", title: `Average over ${count(average.games, "analyzed game", "analyzed games")}` }, formatPercent(average.accuracy));
 }
 
-function ratingsTable(models, analysis) {
-  const num = (value) => h("td", { class: "num" }, value);
-  return h(
-    "div",
-    { class: "table-wrap" },
-    h(
-      "table",
-      { class: "ratings" },
-      h(
-        "thead",
-        {},
+/** The sorts picked on this page, by setting, for when the browser doesn't keep settings. */
+const sortsPicked = {};
+
+/**
+ * A table sortable by any column: a click on a column's header sorts by it
+ * (names A to Z and places from first, everything else from the most), and a
+ * second click the other way. Rows without a value for the column (null) go
+ * last either way, and ties keep the rows' own order. The choice is kept
+ * under `setting`, so it survives the page redrawing the table.
+ *
+ * Each column: { key, label, title?, text? (sorts as text), ascending?
+ * (sorts up first), value(row, i), cell(row, i) }, where i is the row's place
+ * in `rows`.
+ */
+function sortableTable({ className, columns, rows, setting, initial }) {
+  const wrap = h("div", { class: "table-wrap" });
+  const current = () => {
+    const [key, direction] = String(sortsPicked[setting] ?? loadSetting(setting, "")).split(":");
+    return columns.some((c) => c.key === key) ? { key, descending: direction === "desc" } : initial;
+  };
+
+  const draw = (focus) => {
+    const sort = current();
+    const column = columns.find((c) => c.key === sort.key);
+    const sorted = rows.map((row, i) => ({ row, i, value: column.value(row, i) }));
+    sorted.sort((a, b) => {
+      if (a.value === null || b.value === null) return (a.value === null) - (b.value === null) || a.i - b.i;
+      const order = column.text ? a.value.localeCompare(b.value) : a.value - b.value;
+      return (sort.descending ? -order : order) || a.i - b.i;
+    });
+    const header = (c) => {
+      const active = c.key === sort.key;
+      const ascendingFirst = c.text || c.ascending;
+      const next = active ? (sort.descending ? "ascending" : "descending") : ascendingFirst ? "ascending" : "descending";
+      const mark = h("span", { class: "sort-mark", "aria-hidden": "true" }, active ? (sort.descending ? "▼" : "▲") : "");
+      return h(
+        "th",
+        { class: c.text ? "sortable" : "num sortable", "aria-sort": active ? (sort.descending ? "descending" : "ascending") : null },
         h(
-          "tr",
-          {},
-          h("th", { class: "num" }, "#"),
-          h("th", {}, "Model"),
-          ["Rating", "Games", "Won", "Drawn", "Lost", "Illegal", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
+          "button",
+          {
+            type: "button",
+            class: "sort",
+            "data-sort": c.key,
+            title: `${c.title ?? c.label}: sort ${next}`,
+            onclick: () => {
+              sortsPicked[setting] = `${c.key}:${next === "descending" ? "desc" : "asc"}`;
+              saveSetting(setting, sortsPicked[setting]);
+              draw(c.key);
+            },
+          },
+          // Before a right-aligned label, so the label stays over its numbers.
+          c.text ? [c.label, mark] : [mark, c.label],
         ),
-      ),
+      );
+    };
+    wrap.replaceChildren(
       h(
-        "tbody",
-        {},
-        models.map((m, i) =>
-          h(
-            "tr",
-            {},
-            num(i + 1),
-            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
-            h("td", { class: "num rating-cell" }, m.rating),
-            num(m.games),
-            num(m.wins),
-            num(m.draws),
-            num(m.losses),
-            illegalCell(m.illegalMoves),
-            accuracyCell(m.accuracy, analysis, "finished games in this time control"),
-          ),
+        "table",
+        { class: className },
+        h("thead", {}, h("tr", {}, columns.map(header))),
+        h(
+          "tbody",
+          {},
+          sorted.map(({ row, i }) => h("tr", {}, columns.map((c) => c.cell(row, i)))),
         ),
       ),
-    ),
-  );
+    );
+    if (focus) wrap.querySelector(`button[data-sort="${focus}"]`)?.focus();
+  };
+  draw();
+  return wrap;
 }
 
-/** Every model's figures over all its finished games, whatever the time control. */
+const RATINGS_SORT_SETTING = "botwinnik.ratingsSort";
+const OVERALL_SORT_SETTING = "botwinnik.overallSort";
+
+/** A cell with a number in it. */
+function num(value) {
+  return h("td", { class: "num" }, value);
+}
+
+/** The Model column of a table of models, with the provider on hover. */
+const MODEL_COLUMN = {
+  key: "model",
+  label: "Model",
+  text: true,
+  value: (m) => m.model,
+  cell: (m) => h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
+};
+
+/** A model's illegal-move share, null when it has none. */
+const illegalPercent = (rate) => rate?.percent ?? null;
+
+/** A time category's table, highest rating first to begin with. */
+function ratingsTable(models, analysis) {
+  return sortableTable({
+    className: "ratings",
+    rows: models,
+    setting: RATINGS_SORT_SETTING,
+    initial: { key: "rating", descending: true },
+    columns: [
+      { key: "place", label: "#", title: "Place by rating", ascending: true, value: (m, i) => i, cell: (m, i) => num(i + 1) },
+      MODEL_COLUMN,
+      { key: "rating", label: "Rating", value: (m) => m.rating, cell: (m) => h("td", { class: "num rating-cell" }, m.rating) },
+      { key: "games", label: "Games", value: (m) => m.games, cell: (m) => num(m.games) },
+      { key: "wins", label: "Won", value: (m) => m.wins, cell: (m) => num(m.wins) },
+      { key: "draws", label: "Drawn", value: (m) => m.draws, cell: (m) => num(m.draws) },
+      { key: "losses", label: "Lost", value: (m) => m.losses, cell: (m) => num(m.losses) },
+      { key: "illegal", label: "Illegal", value: (m) => illegalPercent(m.illegalMoves), cell: (m) => illegalCell(m.illegalMoves) },
+      {
+        key: "accuracy",
+        label: "Accuracy",
+        value: (m) => m.accuracy?.accuracy ?? null,
+        cell: (m) => accuracyCell(m.accuracy, analysis, "finished games in this time control"),
+      },
+    ],
+  });
+}
+
+/** Every model's figures over all its finished games, whatever the time control: most games first to begin with. */
 function overallTable(models, analysis) {
-  const num = (value) => h("td", { class: "num" }, value);
-  return h(
-    "div",
-    { class: "table-wrap" },
-    h(
-      "table",
-      { class: "ratings" },
-      h(
-        "thead",
-        {},
-        h(
-          "tr",
-          {},
-          h("th", {}, "Model"),
-          ["Games", "Illegal", "Accuracy"].map((t) => h("th", { class: "num" }, t)),
-        ),
-      ),
-      h(
-        "tbody",
-        {},
-        models.map((m) =>
-          h(
-            "tr",
-            {},
-            h("td", { title: PROVIDER_NAMES[m.provider] ?? m.provider }, m.model),
-            num(m.games),
-            illegalCell(m.illegalMoves),
-            accuracyCell(m.accuracy, analysis, "finished games"),
-          ),
-        ),
-      ),
-    ),
-  );
+  return sortableTable({
+    className: "ratings",
+    rows: models,
+    setting: OVERALL_SORT_SETTING,
+    initial: { key: "games", descending: true },
+    columns: [
+      MODEL_COLUMN,
+      { key: "games", label: "Games", value: (m) => m.games, cell: (m) => num(m.games) },
+      { key: "illegal", label: "Illegal", value: (m) => illegalPercent(m.illegalMoves), cell: (m) => illegalCell(m.illegalMoves) },
+      { key: "accuracy", label: "Accuracy", value: (m) => m.accuracy?.accuracy ?? null, cell: (m) => accuracyCell(m.accuracy, analysis, "finished games") },
+    ],
+  });
 }
 
 function gamesTable(games) {
@@ -1129,127 +1186,59 @@ function tournamentState(t, round, standings, games) {
 }
 
 const STANDINGS_SORT_SETTING = "botwinnik.standingsSort";
-/** The sort picked on this page, for when the browser doesn't keep settings. */
-let standingsSortPicked = null;
 
-/**
- * The standings' columns, each with the value it sorts by (null when the
- * model has none, which sorts last either way) and the cell it shows.
- * `i` is the model's place in the standings as the server ranked them.
- */
-function standingsColumns(category, analysis, ranked) {
-  const num = (value) => h("td", { class: "num" }, value);
-  const sb = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
-  const played = (s, value) => (s.played ? value : null);
-  return [
-    { key: "rank", label: "#", title: "Place", value: (s, i) => i, cell: (s) => num(ranked ? s.rank : "") },
-    { key: "model", label: "Model", text: true, value: (s) => s.model, cell: (s) => h("td", {}, s.model) },
-    { key: "points", label: "Points", value: (s) => s.points, cell: (s) => h("td", { class: "num rating-cell" }, formatPoints(s.points)) },
-    { key: "played", label: "Played", value: (s) => s.played, cell: (s) => num(s.played) },
-    { key: "wins", label: "Won", value: (s) => s.wins, cell: (s) => num(s.wins) },
-    { key: "draws", label: "Drawn", value: (s) => s.draws, cell: (s) => num(s.draws) },
-    { key: "losses", label: "Lost", value: (s) => s.losses, cell: (s) => num(s.losses) },
-    {
-      key: "tiebreak",
-      label: h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB"),
-      title: "Sonneborn-Berger tiebreak",
-      value: (s) => s.tiebreak,
-      cell: (s) => num(sb(s.tiebreak)),
-    },
-    {
-      key: "illegal",
-      label: "Illegal",
-      value: (s) => played(s, s.illegalMoves?.percent ?? null),
-      cell: (s) => (s.played ? illegalCell(s.illegalMoves) : num("")),
-    },
-    {
-      key: "accuracy",
-      label: "Accuracy",
-      value: (s) => played(s, s.accuracy?.accuracy ?? null),
-      cell: (s) => (s.played ? accuracyCell(s.accuracy, analysis, "finished games in this tournament") : num("")),
-    },
-    {
-      key: "rating",
-      label: "Rating",
-      value: (s) => s.rating?.now ?? null,
-      cell: (s) =>
-        h(
-          "td",
-          { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
-          s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
-        ),
-    },
-  ];
-}
-
-/** How the standings were sorted last: { key, descending }, by place to begin with. */
-function standingsSort(columns) {
-  const [key, direction] = String(standingsSortPicked ?? loadSetting(STANDINGS_SORT_SETTING, "")).split(":");
-  return columns.some((c) => c.key === key) ? { key, descending: direction === "desc" } : { key: "rank", descending: false };
-}
-
-/**
- * The standings, sortable by any column: a click on its header sorts by it
- * (names A to Z and places from first, everything else from the most), a
- * second click the other way. Ties keep the standings' own order.
- */
+/** The tournament's standings, most points first to begin with (ties as ranked: tiebreak, then wins). */
 function standingsTable(standings, category, analysis) {
   // No places until a game has finished.
   const ranked = standings.some((s) => s.played > 0);
-  const columns = standingsColumns(category, analysis, ranked);
-  const wrap = h("div", { class: "table-wrap" });
-
-  const draw = (focus) => {
-    const sort = standingsSort(columns);
-    const column = columns.find((c) => c.key === sort.key);
-    const rows = standings.map((s, i) => ({ s, i, value: column.value(s, i) }));
-    rows.sort((a, b) => {
-      if (a.value === null || b.value === null) return (a.value === null) - (b.value === null) || a.i - b.i;
-      const order = column.text ? a.value.localeCompare(b.value) : a.value - b.value;
-      return (sort.descending ? -order : order) || a.i - b.i;
-    });
-    const header = (c) => {
-      const active = c.key === sort.key;
-      const ascendingFirst = c.text || c.key === "rank";
-      const next = active ? (sort.descending ? "ascending" : "descending") : ascendingFirst ? "ascending" : "descending";
-      const mark = h("span", { class: "sort-mark", "aria-hidden": "true" }, active ? (sort.descending ? "▼" : "▲") : "");
-      return h(
-        "th",
-        { class: c.text ? "sortable" : "num sortable", "aria-sort": active ? (sort.descending ? "descending" : "ascending") : null },
-        h(
-          "button",
-          {
-            type: "button",
-            class: "sort",
-            "data-sort": c.key,
-            title: `${c.title ?? c.label}: sort ${next}`,
-            onclick: () => {
-              standingsSortPicked = `${c.key}:${next === "descending" ? "desc" : "asc"}`;
-              saveSetting(STANDINGS_SORT_SETTING, standingsSortPicked);
-              draw(c.key);
-            },
-          },
-          // Before a right-aligned label, so the label stays over its numbers.
-          c.text ? [c.label, mark] : [mark, c.label],
-        ),
-      );
-    };
-    wrap.replaceChildren(
-      h(
-        "table",
-        { class: "ratings standings" },
-        h("thead", {}, h("tr", {}, columns.map(header))),
-        h(
-          "tbody",
-          {},
-          rows.map(({ s }) => h("tr", {}, columns.map((c) => c.cell(s)))),
-        ),
-      ),
-    );
-    if (focus) wrap.querySelector(`button[data-sort="${focus}"]`)?.focus();
-  };
-  draw();
-  return wrap;
+  const sb = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
+  // Accuracy and illegal moves mean nothing before a model has finished a game.
+  const played = (s, value) => (s.played ? value : null);
+  return sortableTable({
+    className: "ratings standings",
+    rows: standings,
+    setting: STANDINGS_SORT_SETTING,
+    initial: { key: "points", descending: true },
+    columns: [
+      { key: "rank", label: "#", title: "Place", ascending: true, value: (s, i) => i, cell: (s) => num(ranked ? s.rank : "") },
+      { key: "model", label: "Model", text: true, value: (s) => s.model, cell: (s) => h("td", {}, s.model) },
+      { key: "points", label: "Points", value: (s) => s.points, cell: (s) => h("td", { class: "num rating-cell" }, formatPoints(s.points)) },
+      { key: "played", label: "Played", value: (s) => s.played, cell: (s) => num(s.played) },
+      { key: "wins", label: "Won", value: (s) => s.wins, cell: (s) => num(s.wins) },
+      { key: "draws", label: "Drawn", value: (s) => s.draws, cell: (s) => num(s.draws) },
+      { key: "losses", label: "Lost", value: (s) => s.losses, cell: (s) => num(s.losses) },
+      {
+        key: "tiebreak",
+        label: h("abbr", { title: "Sonneborn-Berger tiebreak" }, "SB"),
+        title: "Sonneborn-Berger tiebreak",
+        value: (s) => s.tiebreak,
+        cell: (s) => num(sb(s.tiebreak)),
+      },
+      {
+        key: "illegal",
+        label: "Illegal",
+        value: (s) => played(s, illegalPercent(s.illegalMoves)),
+        cell: (s) => (s.played ? illegalCell(s.illegalMoves) : num("")),
+      },
+      {
+        key: "accuracy",
+        label: "Accuracy",
+        value: (s) => played(s, s.accuracy?.accuracy ?? null),
+        cell: (s) => (s.played ? accuracyCell(s.accuracy, analysis, "finished games in this tournament") : num("")),
+      },
+      {
+        key: "rating",
+        label: "Rating",
+        value: (s) => s.rating?.now ?? null,
+        cell: (s) =>
+          h(
+            "td",
+            { class: "num", title: `${CATEGORY_NAMES[category] ?? category} rating now, and the change from this tournament's games` },
+            s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
+          ),
+      },
+    ],
+  });
 }
 
 function ratingChange(delta) {

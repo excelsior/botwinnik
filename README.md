@@ -329,7 +329,9 @@ don't count; a paused game counts once it is resumed and finished.
 
 The home page lists the ratings with a tab per category, next to each
 model's illegal moves and accuracy in that category (see Illegal moves and
-Accuracy), and an All tab with those over every time control. The game page
+Accuracy), and an All tab with those over every time control. A click on a
+column's header sorts a table by it, and a second click the other way; the
+page remembers the choice, for the standings too. The game page
 shows each player's rating in the game's category going into the game and,
 once it's over, the change. `botwinnik ratings` prints a table per category
 and one for every time control together (`botwinnik ratings blitz` just the
@@ -371,9 +373,9 @@ their round until they are resumed. Tournaments are saved as
 
 The standings also show the share of each model's moves in its tournament
 games that were illegal (see Illegal moves), and its accuracy over those
-that Stockfish has analyzed (see Accuracy). A click on a column's header
-sorts the standings by it (a second click the other way), and the page
-remembers the choice.
+that Stockfish has analyzed (see Accuracy). They're sorted by points to
+begin with (ties as ranked); a click on a column's header sorts them by it
+instead, and a second click the other way.
 
 ## Saved games and PGN
 
