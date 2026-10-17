@@ -136,6 +136,13 @@ function totalCost(game) {
 
 const UNKNOWN_PRICE = "Price unknown for this model: add it under [prices] in config.ini";
 
+/** "12 API calls, 9,400 input / 1,200 output tokens", for a cost's tooltip. */
+function spendTitle(spend) {
+  const calls = `${spend.calls} API call${spend.calls === 1 ? "" : "s"}`;
+  const tokens = `${spend.inputTokens.toLocaleString()} input / ${spend.outputTokens.toLocaleString()} output tokens`;
+  return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
+}
+
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -1237,6 +1244,15 @@ function standingsTable(standings, category, analysis) {
             s.rating ? [String(s.rating.now), s.played ? ratingChange(s.rating.change) : h("span", { class: "rating-change" })] : "",
           ),
       },
+      {
+        key: "cost",
+        label: "Cost",
+        value: (s) => s.spend?.costUsd ?? null,
+        cell: (s) =>
+          s.spend
+            ? h("td", { class: "num cost", title: `${spendTitle(s.spend)} in this tournament's games` }, formatUsd(s.spend.costUsd))
+            : num(""),
+      },
     ],
   });
 }
@@ -1455,12 +1471,6 @@ function showGame(id) {
       clock.classList.toggle("low", ms < 20_000);
       clock.classList.toggle("running", game.status === "running" && sideToMove() === color);
     }
-  }
-
-  function spendTitle(spend) {
-    const calls = `${spend.calls} API call${spend.calls === 1 ? "" : "s"}`;
-    const tokens = `${spend.inputTokens.toLocaleString()} input / ${spend.outputTokens.toLocaleString()} output tokens`;
-    return spend.costUsd === null ? `${calls}, ${tokens}. ${UNKNOWN_PRICE}` : `${calls}, ${tokens}`;
   }
 
   /** The rating going into the game, and what the game did to it once it's over. */

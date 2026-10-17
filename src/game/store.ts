@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { addSpend, emptySpend, findPrice, priceSpend, type ModelPrice, type Spend } from "../pricing.js";
 import { timeCategory } from "../timeControl.js";
-import type { GameRecord } from "./types.js";
+import { COLORS, playerKey, type GameRecord } from "./types.js";
 
 export interface GameSummary {
   id: string;
@@ -23,6 +23,18 @@ export interface GameSummary {
 /** Both players' spend added up. */
 export function gameSpend(game: GameRecord): Spend {
   return addSpend(game.spend?.white ?? emptySpend(), game.spend?.black ?? emptySpend());
+}
+
+/** Each player's spend over `games` added up, by playerKey. */
+export function spendByPlayer(games: readonly GameRecord[]): Map<string, Spend> {
+  const totals = new Map<string, Spend>();
+  for (const game of games) {
+    for (const color of COLORS) {
+      const key = playerKey(game[color]);
+      totals.set(key, addSpend(totals.get(key) ?? emptySpend(), game.spend?.[color] ?? emptySpend()));
+    }
+  }
+  return totals;
 }
 
 /** Saves each game as games/<id>.json, rewriting it after every change. */

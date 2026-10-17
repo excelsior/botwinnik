@@ -2,6 +2,7 @@ import type { AccuracyAverage } from "../analysis/accuracy.js";
 import type { IllegalMoveRate } from "../game/illegalMoves.js";
 import type { GameRatings } from "../game/ratings.js";
 import type { GameRecord, PlayerSpec } from "../game/types.js";
+import type { Spend } from "../pricing.js";
 import type { TimeCategory } from "../timeControl.js";
 
 /** "running" until every round has been played, or the admin aborts it. */
@@ -56,6 +57,8 @@ export interface Standing extends PlayerSpec {
   accuracy?: AccuracyAverage;
   /** Its illegal moves in the tournament's finished games. */
   illegalMoves?: IllegalMoveRate;
+  /** What its API calls used and cost in every game the tournament started, aborted ones included. */
+  spend?: Spend;
 }
 
 /** Whether a pairing's game is over (or gone), so the round can move on. */
