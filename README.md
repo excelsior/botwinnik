@@ -71,6 +71,7 @@ depth = 18
 host = 127.0.0.1
 port = 3000
 games_dir = games
+read_only = false                                  ; true: show the games, start none (see below)
 ```
 
 `effort` sets how hard the models think, by the game's time category. Left
@@ -101,6 +102,13 @@ can be typed in either way. Yandex names its models by URI,
 `gpt://<folder_id>/aliceai-llm`, and a whole URI works too. Use
 `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
 elsewhere.
+
+`read_only = true` makes Botwinnik read-only, to show the games without
+letting anyone start more: the page leaves out the forms and buttons that
+start, resume, import or abort games and tournaments, its API turns those
+requests down, and so do `botwinnik play`, `resume` and `import`. Running
+tournaments wait until it's set back to `false`. Stockfish still analyzes
+finished games.
 
 ## Using it
 

@@ -158,6 +158,16 @@ describe("config", () => {
     assert.throws(() => configFromIni(parseIni("[openai]\napi_key=k\n[app]\nport=abc\n")), /port/);
   });
 
+  it("reads read_only", () => {
+    const readOnly = (value: string) => configFromIni(parseIni(`[openai]\napi_key = k\n[app]\nread_only = ${value}\n`)).readOnly;
+    assert.equal(configFromIni(parseIni("[openai]\napi_key = k\n")).readOnly, false, "off unless set");
+    assert.equal(readOnly(""), false);
+    assert.equal(readOnly("false"), false);
+    assert.equal(readOnly("true"), true);
+    assert.equal(readOnly("Yes"), true);
+    assert.throws(() => readOnly("maybe"), /\[app\] read_only must be true or false, got "maybe"/);
+  });
+
   it("takes the app settings from the environment when it has them", () => {
     const ini = parseIni("[openai]\napi_key=k\n[app]\nhost=127.0.0.1\nport=6464\n");
     const docker = configFromIni(withAppEnv(ini, { BOTWINNIK_HOST: "0.0.0.0", BOTWINNIK_PORT: "3000", BOTWINNIK_GAMES_DIR: "/data/games" }), "/app");

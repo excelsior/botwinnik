@@ -84,6 +84,9 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const config = loadConfig(values.config);
+  if (config.readOnly && ["play", "resume", "import"].includes(command)) {
+    throw new ConfigError(`config.ini has read_only = true, so Botwinnik doesn't start, resume or import games: set it to false to use "${command}".`);
+  }
   const service = new GameService(new GameStore(config.gamesDir, config.prices), playerFactory(config));
   const analysis = new AnalysisService(service, config.analysis);
 
@@ -147,11 +150,17 @@ function serve(config: AppConfig, service: GameService, analysis: AnalysisServic
   if (queued) console.log(`Stockfish is analyzing ${queued} finished game(s) that haven't been yet, in the background.`);
   // After the games' recovery, so a game the stop cut off already shows how it came out of it.
   const tournaments = new TournamentService(service, { analysis });
-  const carriedOn = tournaments.resumeRunning();
-  if (carriedOn) console.log(`Carrying on with ${carriedOn} tournament(s).`);
+  if (config.readOnly) {
+    // Carrying on with a tournament would start its next games.
+    console.log("Read-only (read_only = true in config.ini): the page shows the games, but doesn't start, resume, import or abort any.");
+  } else {
+    const carriedOn = tournaments.resumeRunning();
+    if (carriedOn) console.log(`Carrying on with ${carriedOn} tournament(s).`);
+  }
   const server = createServer(service, {
     providers: config.providers,
     loopbackOnly,
+    readOnly: config.readOnly,
     listModels: (provider) => listModels(provider, config.providers[provider]!),
     tournaments,
     analysis,

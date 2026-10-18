@@ -3,6 +3,8 @@
 import { Engine, evalLabel, favored, whiteShare } from "./engine.js";
 
 const app = document.getElementById("app");
+/** config.ini's read_only, which the server marks the page with: then it leaves out the forms and buttons that start or change games. */
+const READ_ONLY = document.body.hasAttribute("data-read-only");
 let cleanup = () => {};
 /** Started on the first game page and kept, so the engine loads once. */
 let engine = null;
@@ -185,12 +187,13 @@ async function showHome() {
   }
   const ratingsSection = h("section", { class: "card" }, h("h2", {}, "Ratings"), h("p", { class: "muted" }, "Loading…"));
   const gamesSection = h("section", { class: "card" }, h("h2", {}, "Games"), h("p", { class: "muted" }, "Loading…"));
+  const main = h("div", { class: "home-main" }, ratingsSection, gamesSection);
   setChildren(
     app,
     setup.outdated
       ? h("div", { class: "banner warn", role: "status" }, `Botwinnik was updated after this server started, so parts of this page may not work until you ${RESTART}`)
       : null,
-    h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), h("div", { class: "home-main" }, ratingsSection, gamesSection)),
+    READ_ONLY ? main : h("div", { class: "home" }, h("div", { class: "home-side" }, newGameForm(setup), importForm()), main),
   );
 
   let ratedGames = null; // the finished games the ratings shown were worked out from
@@ -736,7 +739,12 @@ function gamesTable(games) {
       h(
         "thead",
         {},
-        h("tr", {}, ["Started", "White", "Black", "Time", "Moves", "Cost", "Result"].map((t) => h("th", {}, t)), h("th", {}, h("span", { class: "visually-hidden" }, "Rematch"))),
+        h(
+          "tr",
+          {},
+          ["Started", "White", "Black", "Time", "Moves", "Cost", "Result"].map((t) => h("th", {}, t)),
+          READ_ONLY ? null : h("th", {}, h("span", { class: "visually-hidden" }, "Rematch")),
+        ),
       ),
       h(
         "tbody",
@@ -765,25 +773,27 @@ function gamesTable(games) {
                   : h("span", { class: "result" }, g.result),
               g.status === "aborted" ? h("span", { class: "muted" }, " aborted") : null,
             ),
-            h(
-              "td",
-              { class: "row-action" },
-              g.status === "finished" || g.status === "aborted"
-                ? h(
-                    "button",
-                    {
-                      type: "button",
-                      class: "small",
-                      title: "Start a game between the same models with the same time control",
-                      onclick: (e) => {
-                        e.stopPropagation();
-                        openRematch({ white: g.white, black: g.black, timeControl: g.timeControl });
-                      },
-                    },
-                    "Rematch",
-                  )
-                : null,
-            ),
+            READ_ONLY
+              ? null
+              : h(
+                  "td",
+                  { class: "row-action" },
+                  g.status === "finished" || g.status === "aborted"
+                    ? h(
+                        "button",
+                        {
+                          type: "button",
+                          class: "small",
+                          title: "Start a game between the same models with the same time control",
+                          onclick: (e) => {
+                            e.stopPropagation();
+                            openRematch({ white: g.white, black: g.black, timeControl: g.timeControl });
+                          },
+                        },
+                        "Rematch",
+                      )
+                    : null,
+                ),
           ),
         ),
       ),
@@ -886,12 +896,13 @@ async function showTournaments() {
     return;
   }
   const listSection = h("section", { class: "card" }, h("h2", {}, "Tournaments"), h("p", { class: "muted" }, "Loading…"));
+  const main = h("div", { class: "home-main" }, listSection);
   setChildren(
     app,
     setup.outdated
       ? h("div", { class: "banner warn", role: "status" }, `Botwinnik was updated after this server started, so parts of this page may not work until you ${RESTART}`)
       : null,
-    h("div", { class: "home wide-side" }, h("div", { class: "home-side" }, newTournamentForm(setup)), h("div", { class: "home-main" }, listSection)),
+    READ_ONLY ? main : h("div", { class: "home wide-side" }, h("div", { class: "home-side" }, newTournamentForm(setup)), main),
   );
   const refresh = async () => {
     try {
@@ -1126,7 +1137,7 @@ function showTournament(id) {
 
     setChildren(
       actions,
-      t.status === "running"
+      t.status === "running" && !READ_ONLY
         ? h(
             "button",
             {
@@ -1185,7 +1196,10 @@ function tournamentState(t, round, standings, games) {
   return [
     `Round ${round} of ${t.rounds.length} is being played.`,
     current.bye !== null ? `${t.players[current.bye].model} rests this round.` : "",
-    paused ? `${paused === 1 ? "A game is" : `${paused} games are`} paused: resume ${paused === 1 ? "it" : "them"} from the game page to play on.` : "",
+    paused
+      ? `${paused === 1 ? "A game is" : `${paused} games are`} paused` +
+        (READ_ONLY ? "." : `: resume ${paused === 1 ? "it" : "them"} from the game page to play on.`)
+      : "",
     round < t.rounds.length ? "The next round starts when every game of this one is over." : "",
   ]
     .filter(Boolean)
@@ -1595,7 +1609,7 @@ function showGame(id) {
     const over = game.status === "finished" || game.status === "aborted";
     setChildren(
       actions,
-      over
+      over && !READ_ONLY
         ? h(
             "button",
             {
@@ -1608,7 +1622,7 @@ function showGame(id) {
       game.status === "running"
         ? h("button", { disabled: true, title: "Available once the game is over or paused" }, "Download PGN")
         : h("a", { class: "button", href: `/api/games/${game.id}/pgn`, download: `botwinnik-${game.id}.pgn` }, "Download PGN"),
-      game.status === "paused"
+      game.status === "paused" && !READ_ONLY
         ? h(
             "button",
             {
@@ -1621,7 +1635,7 @@ function showGame(id) {
             "Resume",
           )
         : null,
-      stoppable
+      stoppable && !READ_ONLY
         ? h(
             "button",
             {
@@ -1880,6 +1894,7 @@ function renderBoard(el, fen, lastUci, flipped) {
 
 // Sticky elements below the header need its height, which changes when the tagline wraps.
 const topbar = document.querySelector(".topbar");
+if (READ_ONLY) topbar.querySelector(".tagline").after(h("span", { class: "badge", title: "Games and tournaments can't be started or changed here" }, "Read-only"));
 new ResizeObserver(() => document.documentElement.style.setProperty("--topbar-height", `${topbar.offsetHeight}px`)).observe(topbar);
 
 window.addEventListener("hashchange", route);

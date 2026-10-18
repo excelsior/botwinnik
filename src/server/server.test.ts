@@ -252,7 +252,9 @@ describe("admin server", () => {
   it("serves the page and the setup options", async () => {
     const page = await fetch(`${base}/`);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /<title>Botwinnik<\/title>/);
+    const html = await page.text();
+    assert.match(html, /<title>Botwinnik<\/title>/);
+    assert.match(html, /<body>/, "not marked read-only");
     assert.equal((await fetch(`${base}/app.js`)).status, 200);
     const icon = await fetch(`${base}/favicon.svg`);
     assert.equal(icon.headers.get("content-type"), "image/svg+xml");
@@ -307,6 +309,58 @@ describe("admin server", () => {
     try {
       const setup = await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/setup`)).json();
       assert.equal(setup.outdated, true);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("only shows the games when read-only", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "botwinnik-"));
+    const store = new GameStore(dir);
+    // A game the app stopped in the middle of, which comes back paused.
+    const stopped = createGameRecord({ id: store.newId(), timeControl: parseTimeControl("5+3"), white: CLAUDE, black: GPT, colorsAssigned: "manual" });
+    stopped.turnStartedAt = new Date().toISOString();
+    store.save(stopped);
+    const service = new GameService(store, foolsMatePlayers);
+    assert.equal(service.recoverInterrupted(), 1);
+    let modelLists = 0;
+    const server = createServer(service, {
+      providers,
+      loopbackOnly: true,
+      readOnly: true,
+      listModels: async () => {
+        modelLists++;
+        return [];
+      },
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const post = (path: string, body: unknown) =>
+      fetch(`${url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    try {
+      assert.match(await (await fetch(`${url}/`)).text(), /<body data-read-only>/, "tells the page to leave out its forms and buttons");
+      const turnedDown = [
+        await post("/api/games", { timeControl: "5+3", players: [CLAUDE, GPT] }),
+        await post("/api/games/import", { pgn: '[White "claude-x"]\n[Black "gpt-x"]\n\n1. e4 e5 *' }),
+        await post(`/api/games/${stopped.id}/resume`, {}),
+        await post(`/api/games/${stopped.id}/abort`, {}),
+        await post("/api/tournaments", { timeControl: "5+3", players: [CLAUDE, GPT, { provider: "anthropic", model: "claude-opus" }] }),
+      ];
+      for (const res of turnedDown) {
+        assert.equal(res.status, 403, res.url);
+        assert.match((await res.json()).error, /^Botwinnik is read-only here \(read_only = true in config\.ini\)/);
+      }
+      const games = await (await fetch(`${url}/api/games`)).json();
+      assert.deepEqual(
+        games.map((g: { id: string; status: string }) => [g.id, g.status]),
+        [[stopped.id, "paused"]],
+        "no game started, imported, resumed or aborted",
+      );
+      assert.deepEqual(await (await fetch(`${url}/api/tournaments`)).json(), []);
+      assert.equal((await fetch(`${url}/api/setup`)).status, 200);
+      assert.equal(modelLists, 0, "the providers aren't asked for their models");
     } finally {
       server.closeAllConnections();
       server.close();

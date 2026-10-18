@@ -43,6 +43,8 @@ export interface AppConfig {
   host: string;
   port: number;
   gamesDir: string;
+  /** [app] read_only: the app shows the games, but doesn't start, resume, import or abort any. */
+  readOnly: boolean;
   /** Prices from the [prices] section, keyed by lowercase model ID. */
   prices: Record<string, ModelPrice>;
   /** From the [analysis] section; null when it turns analysis off. */
@@ -130,9 +132,18 @@ export function configFromIni(ini: IniData, baseDir = process.cwd()): AppConfig 
     host: app.host?.trim() || "127.0.0.1",
     port,
     gamesDir: path.resolve(baseDir, app.games_dir?.trim() || "games"),
+    readOnly: readOnlySetting(app.read_only),
     prices: parsePrices(ini.prices ?? {}),
     analysis: analysisSettings(ini.analysis ?? {}, baseDir),
   };
+}
+
+/** `read_only`: true or false (yes/no, on/off and 1/0 do too); empty is false. */
+function readOnlySetting(value: string | undefined): boolean {
+  const text = value?.trim().toLowerCase() ?? "";
+  if (["", "false", "no", "off", "0"].includes(text)) return false;
+  if (["true", "yes", "on", "1"].includes(text)) return true;
+  throw new ConfigError(`[app] read_only must be true or false, got "${value}"`);
 }
 
 /**

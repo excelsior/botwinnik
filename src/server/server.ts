@@ -45,6 +45,8 @@ export interface ServerOptions {
   providers: Pick<AppConfig, "providers">["providers"];
   /** Reject requests whose Host header isn't a loopback name (DNS-rebinding guard). */
   loopbackOnly: boolean;
+  /** config.ini's read_only: the page only shows the games, and the API refuses to start or change any. */
+  readOnly?: boolean;
   /** Runs the tournaments; defaults to one keeping them next to the games. */
   tournaments?: TournamentService;
   /** Analyzes finished games with Stockfish for the players' accuracy; without it there is no accuracy. */
@@ -75,6 +77,9 @@ export function newestSourceChange(dir = SRC_DIR): number {
 
 /** A PGN with long reasoning for every move runs to a few hundred kilobytes. */
 const MAX_PGN_BYTES = 10 * 1024 * 1024;
+
+const READ_ONLY =
+  "Botwinnik is read-only here (read_only = true in config.ini): it shows the games and tournaments, but doesn't start, resume, import or abort any.";
 
 const MODEL_LIST_TTL_MS = 10 * 60_000;
 const MODEL_LIST_RETRY_MS = 60_000;
@@ -140,13 +145,18 @@ async function handle(
   if (parts[0] !== "api") {
     const file = STATIC_FILES[url.pathname];
     if (method !== "GET" || !file) throw new HttpError(404, "Not found");
-    const body = await readFile(path.join(PUBLIC_DIR, file));
+    let body: Buffer | string = await readFile(path.join(PUBLIC_DIR, file));
+    // Tells the page to leave out the forms and buttons that start or change games.
+    if (file === "index.html" && options.readOnly) body = body.toString("utf8").replace("<body>", "<body data-read-only>");
     // The engine files carry their version in the name, so browsers can keep them.
     const cache = file.startsWith("vendor/") ? "public, max-age=31536000, immutable" : "no-cache";
     res.writeHead(200, { "Content-Type": CONTENT_TYPES[path.extname(file)], "Cache-Control": cache });
     res.end(body);
     return;
   }
+
+  // Every API request but a GET starts or changes something.
+  if (options.readOnly && method !== "GET") throw new HttpError(403, READ_ONLY);
 
   // /api/setup
   if (parts[1] === "setup" && parts.length === 2 && method === "GET") {
@@ -155,7 +165,8 @@ async function handle(
         let available: ModelOption[] | undefined;
         let modelsError: string | undefined;
         try {
-          available = await catalog?.get(p);
+          // A read-only page sets up no games, so the providers needn't be asked.
+          if (!options.readOnly) available = await catalog?.get(p);
         } catch (err) {
           modelsError = err instanceof Error ? err.message : String(err);
         }
