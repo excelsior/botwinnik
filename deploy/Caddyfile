@@ -1,0 +1,22 @@
+# Serves Botwinnik at $DOMAIN over HTTPS, with a certificate Caddy gets from
+# Let's Encrypt, to those who log in as $LOGIN_USER. The settings come from
+# .env (see .env.example).
+{
+	# Browsers send no server name when DOMAIN is an IP address, and behind
+	# Docker's port mapping Caddy can't tell which address they came to.
+	default_sni {$DOMAIN}
+}
+
+{$DOMAIN} {
+	# Let's Encrypt's six-day certificates, the only ones it issues for an IP
+	# address. Caddy renews them by itself.
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+	basic_auth {
+		{$LOGIN_USER} {$LOGIN_PASSWORD_HASH}
+	}
+	reverse_proxy app:3000
+}

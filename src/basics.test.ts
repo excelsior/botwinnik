@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Chess } from "chess.js";
-import { ConfigError, configFromIni, parseIni, parsePlayerSpec } from "./config.js";
+import { ConfigError, configFromIni, parseIni, parsePlayerSpec, withAppEnv } from "./config.js";
 import { formatMoveList, hasOnlyKing, resolveMove } from "./game/moves.js";
 import {
   describeRoughly,
@@ -156,6 +156,28 @@ describe("config", () => {
     assert.equal(config.port, 8080);
     assert.equal(config.gamesDir, "/data/games");
     assert.throws(() => configFromIni(parseIni("[openai]\napi_key=k\n[app]\nport=abc\n")), /port/);
+  });
+
+  it("reads read_only", () => {
+    const readOnly = (value: string) => configFromIni(parseIni(`[openai]\napi_key = k\n[app]\nread_only = ${value}\n`)).readOnly;
+    assert.equal(configFromIni(parseIni("[openai]\napi_key = k\n")).readOnly, false, "off unless set");
+    assert.equal(readOnly(""), false);
+    assert.equal(readOnly("false"), false);
+    assert.equal(readOnly("true"), true);
+    assert.equal(readOnly("Yes"), true);
+    assert.throws(() => readOnly("maybe"), /\[app\] read_only must be true or false, got "maybe"/);
+  });
+
+  it("takes the app settings from the environment when it has them", () => {
+    const ini = parseIni("[openai]\napi_key=k\n[app]\nhost=127.0.0.1\nport=6464\n");
+    const docker = configFromIni(withAppEnv(ini, { BOTWINNIK_HOST: "0.0.0.0", BOTWINNIK_PORT: "3000", BOTWINNIK_GAMES_DIR: "/data/games" }), "/app");
+    assert.equal(docker.host, "0.0.0.0");
+    assert.equal(docker.port, 3000);
+    assert.equal(docker.gamesDir, "/data/games");
+    const local = configFromIni(withAppEnv(ini, { BOTWINNIK_HOST: " " }), "/srv");
+    assert.equal(local.host, "127.0.0.1", "an empty variable leaves the setting alone");
+    assert.equal(local.port, 6464);
+    assert.equal(local.gamesDir, "/srv/games");
   });
 
   it("needs Yandex's folder next to its key", () => {

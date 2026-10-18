@@ -1,0 +1,11 @@
+# config.ini and .env hold the API keys and the login: they're mounted or read
+# at run time, never built into the image.
+config.ini
+.env
+games/
+node_modules/
+.git/
+.github/
+.devcontainer/
+*.tmp
+*.log

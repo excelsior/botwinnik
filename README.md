@@ -71,6 +71,7 @@ depth = 18
 host = 127.0.0.1
 port = 3000
 games_dir = games
+read_only = false                                  ; true: show the games, start none (see below)
 ```
 
 `effort` sets how hard the models think, by the game's time category. Left
@@ -101,6 +102,13 @@ can be typed in either way. Yandex names its models by URI,
 `gpt://<folder_id>/aliceai-llm`, and a whole URI works too. Use
 `BOTWINNIK_CONFIG=/path/to/config.ini` (or `--config`) to read the file from
 elsewhere.
+
+`read_only = true` makes Botwinnik read-only, to show the games without
+letting anyone start more: the page leaves out the forms and buttons that
+start, resume, import or abort games and tournaments, its API turns those
+requests down, and so do `botwinnik play`, `resume` and `import`. Running
+tournaments wait until it's set back to `false`. Stockfish still analyzes
+finished games.
 
 ## Using it
 
@@ -406,6 +414,74 @@ game already has it. PGNs from elsewhere work too when they have a
 `xai` or `yandex`); their comments become the moves' reasoning. A game
 without a result is imported paused, ready to resume from its last position
 with the clocks it had, unless that position already ends the game.
+
+## Running on a server
+
+`deploy.sh` puts Botwinnik on a Linux server, such as a DigitalOcean droplet,
+where it runs with Docker behind [Caddy](https://caddyserver.com), which serves
+it over HTTPS with a certificate from Let's Encrypt and asks for a login, since
+anyone who can open the page can start games on your API keys. The games are
+kept in a Docker volume, so restarts, rebuilds and updates don't lose them.
+
+1. **Create a droplet** with Ubuntu, and with your SSH key, so that
+   `ssh root@<droplet IP>` logs in. The smallest size with 1 GB of memory is
+   enough, since the models do the thinking on their providers' servers.
+2. **Deploy** from this folder, with the API keys in `config.ini` as under
+   Setup:
+
+   ```bash
+   ./deploy.sh root@<droplet IP>
+   ```
+
+   The first time, it installs Docker on the droplet and asks for the
+   password the page will ask for (the user is `admin`). Then it copies the
+   latest commit and `config.ini` to `/opt/botwinnik` on the droplet, builds
+   and starts the app there, and waits for `https://<droplet IP>/` to answer.
+   Let's Encrypt certifies IP addresses too, for six days at a time, and Caddy
+   renews the certificate by itself. The app starts again by itself when the
+   droplet reboots.
+
+Run `./deploy.sh root@<droplet IP>` again to deploy a newer commit or a
+changed `config.ini` (changes you haven't committed stay behind); it keeps the
+login. Restarting the app pauses the games running on it, as any restart does,
+so if there are some, it asks first; resume them on their pages afterwards.
+`--domain chess.example.com` serves the page at a domain instead, once an A
+record points the domain at the droplet (at your DNS provider, or under
+Networking › Domains in DigitalOcean), and later deploys keep it.
+`--password` asks for a new password, and `--user` sets a new user name.
+
+On the droplet, in `/opt/botwinnik`:
+
+```bash
+docker compose logs -f app                             # what the app prints
+docker compose logs caddy                              # why HTTPS isn't answering, if it isn't
+docker compose exec app npm run botwinnik -- ratings   # the command line, in the container
+docker compose cp app:/data/games ./games-backup       # copy the saved games out
+```
+
+`config.ini`'s `host`, `port` and `games_dir` don't apply there: the image sets
+them with `BOTWINNIK_HOST`, `BOTWINNIK_PORT` and `BOTWINNIK_GAMES_DIR` (which
+override them anywhere). Each deploy replaces `config.ini` with yours, so change
+it on your machine. To bring over the games saved on your machine:
+
+```bash
+COPYFILE_DISABLE=1 tar --no-xattrs -C games -c . |
+  ssh root@<droplet IP> 'cd /opt/botwinnik && docker compose exec -T app tar -x -C /data/games && docker compose restart app'
+```
+
+**By hand**, without `deploy.sh`: on a server with Docker and its compose
+plugin, get the code into a folder (cloning a private repository there needs a
+deploy key), and in it:
+
+```bash
+cp config.example.ini config.ini && nano config.ini   # the API keys, as under Setup
+docker run --rm -it caddy:2 caddy hash-password       # type the password to log in with
+cp .env.example .env && nano .env                     # the domain or IP, a user name and that hash
+docker compose up -d --build
+```
+
+The hash goes between the single quotes in `.env`, which keep its `$` signs
+from being read as variables.
 
 ## Development
 

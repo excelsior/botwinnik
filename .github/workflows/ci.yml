@@ -17,3 +17,19 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck --severity=warning deploy.sh
+      - run: docker build -t botwinnik .
+      - name: Start the image and load the page
+        run: |
+          printf '[anthropic]\napi_key = placeholder\n' > config.ini
+          docker run -d --name botwinnik -p 3000:3000 -v "$PWD/config.ini:/app/config.ini:ro" botwinnik
+          for i in $(seq 30); do curl -fs localhost:3000/ > /dev/null && break; sleep 1; done
+          curl -fsS localhost:3000/ > /dev/null
+          curl -fsS localhost:3000/api/games
+      - if: failure()
+        run: docker logs botwinnik
